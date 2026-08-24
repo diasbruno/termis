@@ -220,4 +220,68 @@ TypePtr parse_type(const Form& form) {
   fail(form.location, "expected type expression");
 }
 
+TypeDeclaration parse_type_declaration(const Form& form) {
+  const auto* list = as_list(form);
+  if (list == nullptr || list->elements.empty()) {
+    fail(form.location, "type declaration must be a list");
+  }
+
+  const auto head = require_symbol_name(element(*list, 0), "type declaration head must be a symbol");
+  if (head != "type") {
+    fail(element(*list, 0).location, "expected type declaration");
+  }
+
+  if (list->elements.size() != 3 && list->elements.size() != 4) {
+    fail(form.location, "type declaration expects either 3 or 4 forms");
+  }
+
+  TypeDeclaration declaration{
+      require_symbol_name(element(*list, 1), "type declaration name must be a symbol"),
+      element(*list, 1).location,
+      {},
+      nullptr,
+  };
+
+  std::size_t body_index = 2;
+  if (list->elements.size() == 4) {
+    const auto* parameters = as_list(element(*list, 2));
+    if (parameters == nullptr) {
+      fail(element(*list, 2).location, "type parameters must be a list");
+    }
+
+    for (const auto& parameter : parameters->elements) {
+      declaration.parameters.push_back(TypeParameter{
+          require_symbol_name(*parameter, "type parameter must be a symbol"),
+          parameter->location,
+      });
+    }
+    body_index = 3;
+  }
+
+  declaration.body = parse_type(element(*list, body_index));
+  return declaration;
+}
+
+void TypeEnvironment::declare(TypeDeclaration declaration) {
+  if (declaration_indexes_.contains(declaration.name)) {
+    fail(declaration.location, "type declaration redefines existing type");
+  }
+
+  const auto index = declarations_.size();
+  declaration_indexes_.emplace(declaration.name, index);
+  declarations_.push_back(std::move(declaration));
+}
+
+const TypeDeclaration* TypeEnvironment::find(std::string_view name) const {
+  const auto found = declaration_indexes_.find(std::string(name));
+  if (found == declaration_indexes_.end()) {
+    return nullptr;
+  }
+  return &declarations_[found->second];
+}
+
+std::size_t TypeEnvironment::size() const {
+  return declarations_.size();
+}
+
 }  // namespace termis

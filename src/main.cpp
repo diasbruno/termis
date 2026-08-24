@@ -86,6 +86,10 @@ int main(int argc, char** argv) {
     if (program.forms.size() != 1) {
       std::cout << 's';
     }
+    std::cout << ", collected " << program.types.size() << " type declaration";
+    if (program.types.size() != 1) {
+      std::cout << 's';
+    }
     std::cout << '\n';
   } catch (const termis::ReadError& error) {
     const auto& diagnostic = error.diagnostic();

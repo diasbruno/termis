@@ -1,6 +1,4 @@
 #include "semantic.hpp"
-#include "type.hpp"
-
 #include <utility>
 
 namespace termis {
@@ -130,7 +128,11 @@ Program analyze_forms(const std::vector<FormPtr>& forms) {
   Program program;
   program.forms.reserve(forms.size());
   for (const auto& form : forms) {
-    program.forms.push_back(analyze_form(*form));
+    auto node = analyze_form(*form);
+    if (node->kind == SemanticKind::type_declaration) {
+      program.types.declare(parse_type_declaration(*form));
+    }
+    program.forms.push_back(std::move(node));
   }
   return program;
 }

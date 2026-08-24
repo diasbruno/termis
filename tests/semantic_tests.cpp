@@ -95,6 +95,23 @@ void accepts_empty_lists() {
           "expected empty list to remain a list expression");
 }
 
+void collects_type_declarations() {
+  auto program = analyze(R"(
+    (type UserId u64)
+    (type Pair (A B) (product (first A) (second B)))
+  )");
+
+  require(program.types.size() == 2, "expected two type declarations");
+
+  const auto* user_id = program.types.find("UserId");
+  require(user_id != nullptr, "expected UserId declaration");
+  require(user_id->body->primitive == termis::PrimitiveType::u64, "expected UserId body");
+
+  const auto* pair = program.types.find("Pair");
+  require(pair != nullptr, "expected Pair declaration");
+  require(pair->parameters.size() == 2, "expected Pair parameters");
+}
+
 }  // namespace
 
 int main() {
@@ -102,4 +119,5 @@ int main() {
   rejects_bad_type_declaration();
   rejects_bad_type_body();
   accepts_empty_lists();
+  collects_type_declarations();
 }

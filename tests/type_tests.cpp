@@ -113,6 +113,46 @@ void rejects_bad_type_forms() {
   require(false, "expected bad array failure");
 }
 
+void parses_type_declarations() {
+  auto forms = termis::read_forms("(type Pair (A B) (product (first A) (second B)))");
+  const auto declaration = termis::parse_type_declaration(*forms[0]);
+
+  require(declaration.name == "Pair", "expected declaration name");
+  require(declaration.parameters.size() == 2, "expected type parameters");
+  require(declaration.parameters[0].name == "A", "expected first type parameter");
+  require(declaration.parameters[1].name == "B", "expected second type parameter");
+  require(declaration.body->kind == termis::TypeKind::product, "expected declaration body");
+}
+
+void rejects_bad_type_parameters() {
+  try {
+    auto forms = termis::read_forms("(type Id (42) u64)");
+    (void)termis::parse_type_declaration(*forms[0]);
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "type parameter must be a symbol",
+            "expected type parameter diagnostic");
+    return;
+  }
+
+  require(false, "expected bad type parameter failure");
+}
+
+void rejects_duplicate_type_declarations() {
+  try {
+    termis::TypeEnvironment environment;
+    auto first = termis::read_forms("(type UserId u64)");
+    auto second = termis::read_forms("(type UserId i64)");
+    environment.declare(termis::parse_type_declaration(*first[0]));
+    environment.declare(termis::parse_type_declaration(*second[0]));
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "type declaration redefines existing type",
+            "expected duplicate declaration diagnostic");
+    return;
+  }
+
+  require(false, "expected duplicate declaration failure");
+}
+
 }  // namespace
 
 int main() {
@@ -121,4 +161,7 @@ int main() {
   parses_core_type_constructors();
   parses_aggregate_types();
   rejects_bad_type_forms();
+  parses_type_declarations();
+  rejects_bad_type_parameters();
+  rejects_duplicate_type_declarations();
 }

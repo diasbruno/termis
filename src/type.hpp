@@ -5,6 +5,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace termis {
@@ -77,6 +78,31 @@ struct Type {
   const Form* array_size = nullptr;
 };
 
+struct TypeParameter {
+  std::string name;
+  SourceLocation location;
+};
+
+struct TypeDeclaration {
+  std::string name;
+  SourceLocation location;
+  std::vector<TypeParameter> parameters;
+  TypePtr body;
+};
+
+class TypeEnvironment {
+ public:
+  void declare(TypeDeclaration declaration);
+
+  const TypeDeclaration* find(std::string_view name) const;
+  std::size_t size() const;
+
+ private:
+  std::vector<TypeDeclaration> declarations_;
+  std::unordered_map<std::string, std::size_t> declaration_indexes_;
+};
+
 TypePtr parse_type(const Form& form);
+TypeDeclaration parse_type_declaration(const Form& form);
 
 }  // namespace termis

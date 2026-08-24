@@ -1,6 +1,7 @@
 #pragma once
 
 #include "reader.hpp"
+#include "type.hpp"
 
 #include <memory>
 #include <stdexcept>
@@ -40,6 +41,7 @@ using SemanticNodePtr = std::unique_ptr<SemanticNode>;
 
 struct Program {
   std::vector<SemanticNodePtr> forms;
+  TypeEnvironment types;
 };
 
 Program analyze_forms(const std::vector<FormPtr>& forms);
