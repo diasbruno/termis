@@ -1,6 +1,8 @@
 #include "codegen.hpp"
 
+#include <optional>
 #include <sstream>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
@@ -18,6 +20,11 @@ struct FunctionSignature {
   std::string return_type;
 };
 
+struct ArmResult {
+  Value value;
+  std::string label;
+};
+
 const Symbol* as_symbol(const Form& form) {
   return std::get_if<Symbol>(&form.kind);
 }
@@ -32,6 +39,20 @@ const IntegerLiteral* as_integer(const Form& form) {
 
 bool is_unit(const Form& form) {
   return std::holds_alternative<UnitLiteral>(form.kind);
+}
+
+std::optional<bool> bool_pattern_value(const Form& form) {
+  const auto* symbol = as_symbol(form);
+  if (symbol == nullptr) {
+    return std::nullopt;
+  }
+  if (symbol->name == "true") {
+    return true;
+  }
+  if (symbol->name == "false") {
+    return false;
+  }
+  return std::nullopt;
 }
 
 const Form& element(const List& list, std::size_t index) {
@@ -92,6 +113,13 @@ std::string llvm_type_for(const Form& form, const TypeEnvironment& types) {
       fail(form.location, "LLVM emission currently supports only primitive type aliases in function signatures");
     }
     return primitive_llvm_type(declaration->body->primitive, form.location);
+  }
+  if (type->kind == TypeKind::application) {
+    const auto instantiated = instantiate_type_application(*type, types);
+    if (instantiated->kind != TypeKind::primitive) {
+      fail(form.location, "LLVM emission currently supports only primitive generic instantiations in function signatures");
+    }
+    return primitive_llvm_type(instantiated->primitive, form.location);
   }
   fail(form.location, "LLVM emission currently supports only primitive types in function signatures");
 }
@@ -199,6 +227,9 @@ class FunctionEmitter {
     if (head == "do") {
       return emit_do(form, *list);
     }
+    if (head == "match") {
+      return emit_match(form, *list);
+    }
     if (head == "+" || head == "-" || head == "*" || head == "/") {
       return emit_arithmetic(form, *list, head);
     }
@@ -244,6 +275,141 @@ class FunctionEmitter {
       result = emit_expression(element(list, index));
     }
     return result;
+  }
+
+  Value emit_match(const Form& form, const List& list) {
+    if (list.elements.size() < 3) {
+      fail(form.location, "match expression requires a value and at least one arm");
+    }
+
+    const auto scrutinee = emit_expression(element(list, 1));
+    const auto done_label = "match.end." + std::to_string(next_label_++);
+    auto next_test_label = "match.test." + std::to_string(next_label_++);
+    out_ << "  br label %" << next_test_label << "\n";
+
+    bool bool_has_true = false;
+    bool bool_has_false = false;
+    if (scrutinee.llvm_type == "i1") {
+      for (std::size_t index = 2; index < list.elements.size(); ++index) {
+        const auto* arm = as_list(element(list, index));
+        if (arm != nullptr && arm->elements.size() == 2) {
+          const auto value = bool_pattern_value(element(*arm, 0));
+          if (value == true) {
+            bool_has_true = true;
+          } else if (value == false) {
+            bool_has_false = true;
+          }
+        }
+      }
+    }
+    const bool bool_exhaustive = scrutinee.llvm_type == "i1" && bool_has_true && bool_has_false;
+
+    std::vector<ArmResult> arm_results;
+    std::optional<std::string> result_type;
+
+    for (std::size_t index = 2; index < list.elements.size(); ++index) {
+      const auto* arm = as_list(element(list, index));
+      if (arm == nullptr || arm->elements.size() != 2) {
+        fail(element(list, index).location, "match arm requires a pattern and expression");
+      }
+
+      const auto body_label = "match.arm." + std::to_string(next_label_++);
+      const auto has_next_arm = index + 1 < list.elements.size();
+      const auto following_test_label = has_next_arm ? "match.test." + std::to_string(next_label_++) : "";
+      const auto final_exhaustive_label = !has_next_arm && bool_exhaustive ? body_label : following_test_label;
+
+      out_ << next_test_label << ":\n";
+      const auto binding = emit_pattern_test(scrutinee, element(*arm, 0), body_label, final_exhaustive_label);
+
+      out_ << body_label << ":\n";
+      auto previous = variables_;
+      if (binding.has_value()) {
+        variables_[*binding] = scrutinee;
+      }
+      const auto arm_value = emit_expression(element(*arm, 1));
+      variables_ = std::move(previous);
+
+      if (!result_type.has_value()) {
+        result_type = arm_value.llvm_type;
+      } else {
+        require_type(arm_value, *result_type, element(*arm, 1).location);
+      }
+      out_ << "  br label %" << done_label << "\n";
+      arm_results.push_back(ArmResult{arm_value, body_label});
+
+      next_test_label = following_test_label;
+    }
+
+    if (!next_test_label.empty()) {
+      out_ << next_test_label << ":\n";
+      fail(form.location, "match expression must end with a catch-all arm");
+    }
+
+    out_ << done_label << ":\n";
+    if (!result_type.has_value() || *result_type == "void") {
+      return Value{"void", ""};
+    }
+
+    const auto temp = next_temp();
+    out_ << "  " << temp << " = phi " << *result_type;
+    for (std::size_t index = 0; index < arm_results.size(); ++index) {
+      if (index != 0) {
+        out_ << ",";
+      }
+      const auto& result = arm_results[index];
+      out_ << " [ " << result.value.ref << ", %" << result.label << " ]";
+    }
+    out_ << "\n";
+    return Value{*result_type, temp};
+  }
+
+  std::optional<std::string> emit_pattern_test(const Value& scrutinee,
+                                               const Form& pattern,
+                                               std::string_view body_label,
+                                               std::string_view next_label) {
+    if (const auto* symbol = as_symbol(pattern)) {
+      if (symbol->name == "_") {
+        out_ << "  br label %" << body_label << "\n";
+        return std::nullopt;
+      }
+      if (symbol->name == "true" || symbol->name == "false") {
+        require_type(scrutinee, "i1", pattern.location);
+        const auto temp = next_temp();
+        out_ << "  " << temp << " = icmp eq i1 " << scrutinee.ref << ", "
+             << (symbol->name == "true" ? "1" : "0") << "\n";
+        emit_pattern_branch(pattern.location, temp, body_label, next_label);
+        return std::nullopt;
+      }
+
+      out_ << "  br label %" << body_label << "\n";
+      return symbol->name;
+    }
+
+    if (const auto* integer = as_integer(pattern)) {
+      require_type(scrutinee, "i64", pattern.location);
+      const auto temp = next_temp();
+      out_ << "  " << temp << " = icmp eq i64 " << scrutinee.ref << ", " << integer->value << "\n";
+      emit_pattern_branch(pattern.location, temp, body_label, next_label);
+      return std::nullopt;
+    }
+
+    if (is_unit(pattern)) {
+      require_type(scrutinee, "void", pattern.location);
+      out_ << "  br label %" << body_label << "\n";
+      return std::nullopt;
+    }
+
+    fail(pattern.location, "unsupported match pattern");
+  }
+
+  void emit_pattern_branch(SourceLocation location,
+                           std::string_view condition,
+                           std::string_view body_label,
+                           std::string_view next_label) {
+    if (next_label.empty()) {
+      fail(location, "match expression must end with a catch-all arm");
+    }
+    out_ << "  br i1 " << condition << ", label %" << body_label << ", label %" << next_label << "\n";
   }
 
   Value emit_arithmetic(const Form& form, const List& list, std::string_view op) {
@@ -344,6 +510,7 @@ class FunctionEmitter {
   std::unordered_map<std::string, Value> variables_;
   std::ostringstream out_;
   std::size_t next_temp_ = 0;
+  std::size_t next_label_ = 0;
 };
 
 }  // namespace

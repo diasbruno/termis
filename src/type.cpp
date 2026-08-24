@@ -2,6 +2,7 @@
 
 #include <array>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace termis {
@@ -61,6 +62,27 @@ TypePtr make_type(TypeKind kind, SourceLocation location) {
   type->kind = kind;
   type->location = location;
   return type;
+}
+
+TypePtr substitute_type_impl(const Type& type, const std::unordered_map<std::string, const Type*>& substitutions);
+
+std::vector<TypePtr> clone_type_vector(const std::vector<TypePtr>& types) {
+  std::vector<TypePtr> cloned;
+  cloned.reserve(types.size());
+  for (const auto& type : types) {
+    cloned.push_back(clone_type(*type));
+  }
+  return cloned;
+}
+
+std::vector<TypePtr> substitute_type_vector(const std::vector<TypePtr>& types,
+                                            const std::unordered_map<std::string, const Type*>& substitutions) {
+  std::vector<TypePtr> substituted;
+  substituted.reserve(types.size());
+  for (const auto& type : types) {
+    substituted.push_back(substitute_type_impl(*type, substitutions));
+  }
+  return substituted;
 }
 
 std::string require_symbol_name(const Form& form, std::string message) {
@@ -290,6 +312,101 @@ const std::vector<TypeDeclaration>& TypeEnvironment::declarations() const {
 
 std::size_t TypeEnvironment::size() const {
   return declarations_.size();
+}
+
+TypePtr clone_type(const Type& type) {
+  auto cloned = make_type(type.kind, type.location);
+  cloned->primitive = type.primitive;
+  cloned->name = type.name;
+  cloned->array_size = type.array_size;
+
+  if (type.element) {
+    cloned->element = clone_type(*type.element);
+  }
+  if (type.result) {
+    cloned->result = clone_type(*type.result);
+  }
+  cloned->arguments = clone_type_vector(type.arguments);
+
+  cloned->fields.reserve(type.fields.size());
+  for (const auto& field : type.fields) {
+    cloned->fields.push_back(Field{field.name, clone_type(*field.type)});
+  }
+
+  cloned->alternatives.reserve(type.alternatives.size());
+  for (const auto& alternative : type.alternatives) {
+    cloned->alternatives.push_back(SumAlternative{
+        alternative.name,
+        clone_type_vector(alternative.payload),
+    });
+  }
+
+  return cloned;
+}
+
+namespace {
+
+TypePtr substitute_type_impl(const Type& type, const std::unordered_map<std::string, const Type*>& substitutions) {
+  if (type.kind == TypeKind::name) {
+    const auto found = substitutions.find(type.name);
+    if (found != substitutions.end()) {
+      return clone_type(*found->second);
+    }
+  }
+
+  auto substituted = make_type(type.kind, type.location);
+  substituted->primitive = type.primitive;
+  substituted->name = type.name;
+  substituted->array_size = type.array_size;
+
+  if (type.element) {
+    substituted->element = substitute_type_impl(*type.element, substitutions);
+  }
+  if (type.result) {
+    substituted->result = substitute_type_impl(*type.result, substitutions);
+  }
+  substituted->arguments = substitute_type_vector(type.arguments, substitutions);
+
+  substituted->fields.reserve(type.fields.size());
+  for (const auto& field : type.fields) {
+    substituted->fields.push_back(Field{field.name, substitute_type_impl(*field.type, substitutions)});
+  }
+
+  substituted->alternatives.reserve(type.alternatives.size());
+  for (const auto& alternative : type.alternatives) {
+    substituted->alternatives.push_back(SumAlternative{
+        alternative.name,
+        substitute_type_vector(alternative.payload, substitutions),
+    });
+  }
+
+  return substituted;
+}
+
+}  // namespace
+
+TypePtr instantiate_type_application(const Type& application, const TypeEnvironment& environment) {
+  if (application.kind != TypeKind::application) {
+    fail(application.location, "expected type application");
+  }
+
+  const auto* declaration = environment.find(application.name);
+  if (declaration == nullptr) {
+    fail(application.location, "unknown generic type name");
+  }
+  if (declaration->parameters.empty()) {
+    fail(application.location, "type does not accept type arguments");
+  }
+  if (declaration->parameters.size() != application.arguments.size()) {
+    fail(application.location, "generic type argument count mismatch");
+  }
+
+  std::unordered_map<std::string, const Type*> substitutions;
+  for (std::size_t index = 0; index < declaration->parameters.size(); ++index) {
+    substitutions.emplace(declaration->parameters[index].name, application.arguments[index].get());
+  }
+
+  return substitute_type_impl(*declaration->body, substitutions);
 }
 
 }  // namespace termis

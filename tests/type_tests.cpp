@@ -153,6 +153,38 @@ void rejects_duplicate_type_declarations() {
   require(false, "expected duplicate declaration failure");
 }
 
+void instantiates_generic_type_declarations() {
+  termis::TypeEnvironment environment;
+  auto forms = termis::read_forms("(type Pair (A B) (product (first A) (second B)))");
+  environment.declare(termis::parse_type_declaration(*forms[0]));
+
+  const auto application = parse_one_type("(Pair i32 bool)");
+  const auto instantiated = termis::instantiate_type_application(*application, environment);
+
+  require(instantiated->kind == termis::TypeKind::product, "expected instantiated product");
+  require(instantiated->fields.size() == 2, "expected instantiated fields");
+  require(instantiated->fields[0].type->primitive == termis::PrimitiveType::i32,
+          "expected substituted first field");
+  require(instantiated->fields[1].type->primitive == termis::PrimitiveType::bool_,
+          "expected substituted second field");
+}
+
+void rejects_bad_generic_arity() {
+  try {
+    termis::TypeEnvironment environment;
+    auto forms = termis::read_forms("(type Box (T) (product (value T)))");
+    environment.declare(termis::parse_type_declaration(*forms[0]));
+    const auto application = parse_one_type("(Box i32 bool)");
+    (void)termis::instantiate_type_application(*application, environment);
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "generic type argument count mismatch",
+            "expected generic arity diagnostic");
+    return;
+  }
+
+  require(false, "expected bad generic arity failure");
+}
+
 }  // namespace
 
 int main() {
@@ -164,4 +196,6 @@ int main() {
   parses_type_declarations();
   rejects_bad_type_parameters();
   rejects_duplicate_type_declarations();
+  instantiates_generic_type_declarations();
+  rejects_bad_generic_arity();
 }

@@ -58,6 +58,29 @@ void emits_comparison_function() {
   contains(ir, "ret i1");
 }
 
+void emits_match_expression() {
+  const auto ir = emit(R"(
+    (fn choose ((flag bool)) i64
+      (match flag
+        (true 1)
+        (false 0)))
+  )");
+
+  contains(ir, "icmp eq i1 %flag, 1");
+  contains(ir, "icmp eq i1 %flag, 0");
+  contains(ir, "phi i64");
+}
+
+void emits_match_binding() {
+  const auto ir = emit(R"(
+    (fn identity ((value i64)) i64
+      (match value
+        (x x)))
+  )");
+
+  contains(ir, "ret i64");
+}
+
 void emits_function_calls() {
   const auto ir = emit(R"(
     (fn add ((a i64) (b i64)) i64 (+ a b))
@@ -75,6 +98,16 @@ void emits_primitive_type_aliases() {
 
   contains(ir, "define i64 @identity(i64 %id)");
   contains(ir, "ret i64 %id");
+}
+
+void emits_primitive_generic_instantiations() {
+  const auto ir = emit(R"(
+    (type Identity (T) T)
+    (fn identity ((value (Identity i64))) (Identity i64) value)
+  )");
+
+  contains(ir, "define i64 @identity(i64 %value)");
+  contains(ir, "ret i64 %value");
 }
 
 void rejects_type_mismatch() {
@@ -95,7 +128,10 @@ int main() {
   emits_arithmetic_function();
   emits_let_do_and_unit();
   emits_comparison_function();
+  emits_match_expression();
+  emits_match_binding();
   emits_function_calls();
   emits_primitive_type_aliases();
+  emits_primitive_generic_instantiations();
   rejects_type_mismatch();
 }

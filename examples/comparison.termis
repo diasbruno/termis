@@ -1,5 +1,7 @@
 (fn greater ((a i64) (b i64)) bool
   (> a b))
 
-(fn main () bool
-  (greater 20 10))
+(fn main () i64
+  (match (greater 20 10)
+    (true 1)
+    (false 0)))

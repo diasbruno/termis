@@ -1,0 +1,16 @@
+(type Pair (A B)
+  (product
+    (first A)
+    (second B)))
+
+(type CounterPair
+  (Pair i32 i64))
+
+(type Identity (T)
+  T)
+
+(fn same-number ((value (Identity i64))) (Identity i64)
+  value)
+
+(fn main () i64
+  (same-number 42))

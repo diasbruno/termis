@@ -154,7 +154,7 @@ Layout LayoutEngine::compute(const Type& type) const {
     }
 
     case TypeKind::application:
-      fail(type.location, "generic type layout is not implemented yet");
+      return compute(*instantiate_type_application(type, types_));
   }
 }
 

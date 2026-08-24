@@ -84,6 +84,20 @@ void computes_named_type_layouts() {
   require(layout.alignment == 4, "expected named type alignment");
 }
 
+void computes_generic_type_layouts() {
+  auto forms = termis::read_forms("(type Pair (A B) (product (first A) (second B)))");
+  const auto program = termis::analyze_forms(forms);
+  const auto pair = parse_one_type("(Pair i32 i64)");
+  termis::LayoutEngine engine(program.types);
+  const auto layout = engine.compute(*pair);
+
+  require(layout.size == 16, "expected generic layout size");
+  require(layout.alignment == 8, "expected generic layout alignment");
+  require(layout.fields.size() == 2, "expected generic field layouts");
+  require(layout.fields[0].offset == 0, "expected first generic field offset");
+  require(layout.fields[1].offset == 8, "expected second generic field offset");
+}
+
 void rejects_void_layout() {
   try {
     (void)layout_of("void");
@@ -116,6 +130,7 @@ int main() {
   computes_product_layouts();
   computes_union_and_sum_layouts();
   computes_named_type_layouts();
+  computes_generic_type_layouts();
   rejects_void_layout();
   rejects_non_literal_array_size();
 }
