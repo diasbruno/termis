@@ -110,6 +110,18 @@ void emits_primitive_generic_instantiations() {
   contains(ir, "ret i64 %value");
 }
 
+void emits_alias_chains_through_generic_instantiations() {
+  const auto ir = emit(R"(
+    (type UserId u64)
+    (type Identity (T) T)
+    (type WrappedUserId (Identity UserId))
+    (fn identity ((value WrappedUserId)) WrappedUserId value)
+  )");
+
+  contains(ir, "define i64 @identity(i64 %value)");
+  contains(ir, "ret i64 %value");
+}
+
 void rejects_type_mismatch() {
   try {
     (void)emit("(fn bad () i64 true)");
@@ -133,5 +145,6 @@ int main() {
   emits_function_calls();
   emits_primitive_type_aliases();
   emits_primitive_generic_instantiations();
+  emits_alias_chains_through_generic_instantiations();
   rejects_type_mismatch();
 }

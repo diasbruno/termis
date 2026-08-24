@@ -1,8 +1,10 @@
 #include "type.hpp"
 
 #include <array>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace termis {
@@ -275,11 +277,13 @@ TypeDeclaration parse_type_declaration(const Form& form) {
       fail(element(*list, 2).location, "type parameters must be a list");
     }
 
+    std::unordered_set<std::string> parameter_names;
     for (const auto& parameter : parameters->elements) {
-      declaration.parameters.push_back(TypeParameter{
-          require_symbol_name(*parameter, "type parameter must be a symbol"),
-          parameter->location,
-      });
+      auto name = require_symbol_name(*parameter, "type parameter must be a symbol");
+      if (!parameter_names.insert(name).second) {
+        fail(parameter->location, "type parameter redefines existing parameter");
+      }
+      declaration.parameters.push_back(TypeParameter{std::move(name), parameter->location});
     }
     body_index = 3;
   }

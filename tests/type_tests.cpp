@@ -137,6 +137,19 @@ void rejects_bad_type_parameters() {
   require(false, "expected bad type parameter failure");
 }
 
+void rejects_duplicate_type_parameters() {
+  try {
+    auto forms = termis::read_forms("(type Bad (T T) T)");
+    (void)termis::parse_type_declaration(*forms[0]);
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "type parameter redefines existing parameter",
+            "expected duplicate type parameter diagnostic");
+    return;
+  }
+
+  require(false, "expected duplicate type parameter failure");
+}
+
 void rejects_duplicate_type_declarations() {
   try {
     termis::TypeEnvironment environment;
@@ -169,6 +182,23 @@ void instantiates_generic_type_declarations() {
           "expected substituted second field");
 }
 
+void instantiates_nested_generic_type_declarations() {
+  termis::TypeEnvironment environment;
+  auto box_forms = termis::read_forms("(type Box (T) (product (value T)))");
+  auto pair_forms = termis::read_forms("(type Pair (A B) (product (first A) (second B)))");
+  environment.declare(termis::parse_type_declaration(*box_forms[0]));
+  environment.declare(termis::parse_type_declaration(*pair_forms[0]));
+
+  const auto application = parse_one_type("(Box (Pair i32 bool))");
+  const auto instantiated = termis::instantiate_type_application(*application, environment);
+
+  require(instantiated->kind == termis::TypeKind::product, "expected outer instantiated product");
+  require(instantiated->fields.size() == 1, "expected outer instantiated field");
+  require(instantiated->fields[0].type->kind == termis::TypeKind::application,
+          "expected nested generic application to be preserved");
+  require(instantiated->fields[0].type->name == "Pair", "expected nested Pair application");
+}
+
 void rejects_bad_generic_arity() {
   try {
     termis::TypeEnvironment environment;
@@ -195,7 +225,9 @@ int main() {
   rejects_bad_type_forms();
   parses_type_declarations();
   rejects_bad_type_parameters();
+  rejects_duplicate_type_parameters();
   rejects_duplicate_type_declarations();
   instantiates_generic_type_declarations();
+  instantiates_nested_generic_type_declarations();
   rejects_bad_generic_arity();
 }

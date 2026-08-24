@@ -9,7 +9,10 @@
 (type Identity (T)
   T)
 
-(fn same-number ((value (Identity i64))) (Identity i64)
+(type CounterId
+  (Identity i64))
+
+(fn same-number ((value CounterId)) CounterId
   value)
 
 (fn main () i64

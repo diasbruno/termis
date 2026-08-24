@@ -1,8 +1,10 @@
 #include "codegen.hpp"
 
 #include <optional>
+#include <string>
 #include <sstream>
 #include <string_view>
+#include <unordered_set>
 #include <unordered_map>
 #include <utility>
 
@@ -96,32 +98,39 @@ std::string primitive_llvm_type(PrimitiveType primitive, SourceLocation location
   }
 }
 
-std::string llvm_type_for(const Form& form, const TypeEnvironment& types) {
-  const auto type = parse_type(form);
-  if (type->kind == TypeKind::primitive) {
-    return primitive_llvm_type(type->primitive, form.location);
+std::string llvm_type_for_type(const Type& type,
+                               const TypeEnvironment& types,
+                               SourceLocation location,
+                               std::unordered_set<std::string>& resolving) {
+  if (type.kind == TypeKind::primitive) {
+    return primitive_llvm_type(type.primitive, location);
   }
-  if (type->kind == TypeKind::name) {
-    const auto* declaration = types.find(type->name);
+  if (type.kind == TypeKind::name) {
+    const auto* declaration = types.find(type.name);
     if (declaration == nullptr) {
-      fail(form.location, "unknown type name");
+      fail(location, "unknown type name");
     }
     if (!declaration->parameters.empty()) {
-      fail(form.location, "generic type requires type arguments");
+      fail(location, "generic type requires type arguments");
     }
-    if (declaration->body->kind != TypeKind::primitive) {
-      fail(form.location, "LLVM emission currently supports only primitive type aliases in function signatures");
+    if (!resolving.insert(type.name).second) {
+      fail(location, "recursive type alias cannot be lowered to LLVM primitive type");
     }
-    return primitive_llvm_type(declaration->body->primitive, form.location);
+    const auto llvm_type = llvm_type_for_type(*declaration->body, types, location, resolving);
+    resolving.erase(type.name);
+    return llvm_type;
   }
-  if (type->kind == TypeKind::application) {
-    const auto instantiated = instantiate_type_application(*type, types);
-    if (instantiated->kind != TypeKind::primitive) {
-      fail(form.location, "LLVM emission currently supports only primitive generic instantiations in function signatures");
-    }
-    return primitive_llvm_type(instantiated->primitive, form.location);
+  if (type.kind == TypeKind::application) {
+    const auto instantiated = instantiate_type_application(type, types);
+    return llvm_type_for_type(*instantiated, types, location, resolving);
   }
-  fail(form.location, "LLVM emission currently supports only primitive types in function signatures");
+  fail(location, "LLVM emission currently supports only primitive types in function signatures");
+}
+
+std::string llvm_type_for(const Form& form, const TypeEnvironment& types) {
+  const auto type = parse_type(form);
+  std::unordered_set<std::string> resolving;
+  return llvm_type_for_type(*type, types, form.location, resolving);
 }
 
 FunctionSignature parse_signature(const Form& form, const TypeEnvironment& types) {
