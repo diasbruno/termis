@@ -1,30 +1,40 @@
 #include "codegen.hpp"
 
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/raw_ostream.h>
+
 #include <optional>
 #include <string>
-#include <sstream>
 #include <string_view>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace termis {
 namespace {
 
 struct Value {
-  std::string llvm_type;
-  std::string ref;
+  llvm::Type* type = nullptr;
+  llvm::Value* value = nullptr;
 };
 
 struct FunctionSignature {
   std::string name;
-  std::vector<std::pair<std::string, std::string>> parameters;
-  std::string return_type;
+  std::vector<std::pair<std::string, llvm::Type*>> parameters;
+  llvm::Type* return_type = nullptr;
 };
 
 struct ArmResult {
   Value value;
-  std::string label;
+  llvm::BasicBlock* block = nullptr;
 };
 
 const Symbol* as_symbol(const Form& form) {
@@ -73,37 +83,40 @@ std::string symbol_name(const Form& form, std::string message) {
   return symbol->name;
 }
 
-std::string primitive_llvm_type(PrimitiveType primitive, SourceLocation location) {
+llvm::Type* primitive_llvm_type(llvm::LLVMContext& context,
+                                PrimitiveType primitive,
+                                SourceLocation location) {
   switch (primitive) {
     case PrimitiveType::bool_:
-      return "i1";
+      return llvm::Type::getInt1Ty(context);
     case PrimitiveType::i8:
     case PrimitiveType::u8:
-      return "i8";
+      return llvm::Type::getInt8Ty(context);
     case PrimitiveType::i16:
     case PrimitiveType::u16:
-      return "i16";
+      return llvm::Type::getInt16Ty(context);
     case PrimitiveType::i32:
     case PrimitiveType::u32:
-      return "i32";
+      return llvm::Type::getInt32Ty(context);
     case PrimitiveType::i64:
     case PrimitiveType::u64:
-      return "i64";
+      return llvm::Type::getInt64Ty(context);
     case PrimitiveType::unit:
     case PrimitiveType::void_:
-      return "void";
+      return llvm::Type::getVoidTy(context);
     case PrimitiveType::f32:
     case PrimitiveType::f64:
       fail(location, "LLVM emission does not support floating-point values yet");
   }
 }
 
-std::string llvm_type_for_type(const Type& type,
+llvm::Type* llvm_type_for_type(llvm::LLVMContext& context,
+                               const Type& type,
                                const TypeEnvironment& types,
                                SourceLocation location,
                                std::unordered_set<std::string>& resolving) {
   if (type.kind == TypeKind::primitive) {
-    return primitive_llvm_type(type.primitive, location);
+    return primitive_llvm_type(context, type.primitive, location);
   }
   if (type.kind == TypeKind::name) {
     const auto* declaration = types.find(type.name);
@@ -116,24 +129,28 @@ std::string llvm_type_for_type(const Type& type,
     if (!resolving.insert(type.name).second) {
       fail(location, "recursive type alias cannot be lowered to LLVM primitive type");
     }
-    const auto llvm_type = llvm_type_for_type(*declaration->body, types, location, resolving);
+    auto* llvm_type = llvm_type_for_type(context, *declaration->body, types, location, resolving);
     resolving.erase(type.name);
     return llvm_type;
   }
   if (type.kind == TypeKind::application) {
     const auto instantiated = instantiate_type_application(type, types);
-    return llvm_type_for_type(*instantiated, types, location, resolving);
+    return llvm_type_for_type(context, *instantiated, types, location, resolving);
   }
   fail(location, "LLVM emission currently supports only primitive types in function signatures");
 }
 
-std::string llvm_type_for(const Form& form, const TypeEnvironment& types) {
+llvm::Type* llvm_type_for(llvm::LLVMContext& context,
+                          const Form& form,
+                          const TypeEnvironment& types) {
   const auto type = parse_type(form);
   std::unordered_set<std::string> resolving;
-  return llvm_type_for_type(*type, types, form.location, resolving);
+  return llvm_type_for_type(context, *type, types, form.location, resolving);
 }
 
-FunctionSignature parse_signature(const Form& form, const TypeEnvironment& types) {
+FunctionSignature parse_signature(llvm::LLVMContext& context,
+                                  const Form& form,
+                                  const TypeEnvironment& types) {
   const auto* list = as_list(form);
   if (list == nullptr || list->elements.size() < 5) {
     fail(form.location, "function declaration requires name, parameters, return type, and body");
@@ -144,7 +161,7 @@ FunctionSignature parse_signature(const Form& form, const TypeEnvironment& types
 
   FunctionSignature signature;
   signature.name = symbol_name(element(*list, 1), "function name must be a symbol");
-  signature.return_type = llvm_type_for(element(*list, 3), types);
+  signature.return_type = llvm_type_for(context, element(*list, 3), types);
 
   const auto* parameters = as_list(element(*list, 2));
   if (parameters == nullptr) {
@@ -157,7 +174,7 @@ FunctionSignature parse_signature(const Form& form, const TypeEnvironment& types
     }
     signature.parameters.push_back({
         symbol_name(element(*parameter, 0), "function parameter name must be a symbol"),
-        llvm_type_for(element(*parameter, 1), types),
+        llvm_type_for(context, element(*parameter, 1), types),
     });
   }
 
@@ -166,56 +183,67 @@ FunctionSignature parse_signature(const Form& form, const TypeEnvironment& types
 
 class FunctionEmitter {
  public:
-  FunctionEmitter(const std::unordered_map<std::string, FunctionSignature>& functions,
+  FunctionEmitter(llvm::LLVMContext& context,
+                  llvm::Module& module,
+                  llvm::IRBuilder<>& builder,
+                  const std::unordered_map<std::string, FunctionSignature>& functions,
                   FunctionSignature signature)
-      : functions_(functions), signature_(std::move(signature)) {}
+      : context_(context),
+        module_(module),
+        builder_(builder),
+        functions_(functions),
+        signature_(std::move(signature)) {}
 
-  std::string emit(const Form& declaration) {
+  void emit(const Form& declaration) {
     const auto* list = as_list(declaration);
-    out_ << "define " << signature_.return_type << " @" << signature_.name << '(';
-    for (std::size_t index = 0; index < signature_.parameters.size(); ++index) {
-      if (index != 0) {
-        out_ << ", ";
-      }
-      out_ << signature_.parameters[index].second << " %" << signature_.parameters[index].first;
-      variables_.emplace(signature_.parameters[index].first,
-                         Value{signature_.parameters[index].second, "%" + signature_.parameters[index].first});
+    std::vector<llvm::Type*> parameter_types;
+    for (const auto& parameter : signature_.parameters) {
+      parameter_types.push_back(parameter.second);
     }
-    out_ << ") {\nentry:\n";
 
-    Value result{"void", ""};
+    auto* function_type = llvm::FunctionType::get(signature_.return_type, parameter_types, false);
+    auto* function = llvm::Function::Create(function_type,
+                                            llvm::Function::ExternalLinkage,
+                                            signature_.name,
+                                            module_);
+    auto parameter = function->arg_begin();
+    for (const auto& signature_parameter : signature_.parameters) {
+      parameter->setName(signature_parameter.first);
+      variables_.emplace(signature_parameter.first, Value{signature_parameter.second, &*parameter});
+      ++parameter;
+    }
+
+    auto* entry = llvm::BasicBlock::Create(context_, "entry", function);
+    builder_.SetInsertPoint(entry);
+
+    Value result{llvm::Type::getVoidTy(context_), nullptr};
     for (std::size_t index = 4; index < list->elements.size(); ++index) {
       result = emit_expression(element(*list, index));
     }
 
-    if (signature_.return_type == "void") {
-      out_ << "  ret void\n";
+    if (signature_.return_type->isVoidTy()) {
+      builder_.CreateRetVoid();
     } else {
       require_type(result, signature_.return_type, declaration.location);
-      out_ << "  ret " << signature_.return_type << ' ' << result.ref << "\n";
+      builder_.CreateRet(result.value);
     }
-    out_ << "}\n";
-    return out_.str();
   }
 
  private:
-  std::string next_temp() {
-    return "%t" + std::to_string(next_temp_++);
-  }
-
   Value emit_expression(const Form& form) {
     if (const auto* integer = as_integer(form)) {
-      return Value{"i64", std::to_string(integer->value)};
+      auto* type = llvm::Type::getInt64Ty(context_);
+      return Value{type, llvm::ConstantInt::get(type, integer->value, true)};
     }
     if (is_unit(form)) {
-      return Value{"void", ""};
+      return Value{llvm::Type::getVoidTy(context_), nullptr};
     }
     if (const auto* symbol = as_symbol(form)) {
       if (symbol->name == "true") {
-        return Value{"i1", "1"};
+        return Value{llvm::Type::getInt1Ty(context_), llvm::ConstantInt::getTrue(context_)};
       }
       if (symbol->name == "false") {
-        return Value{"i1", "0"};
+        return Value{llvm::Type::getInt1Ty(context_), llvm::ConstantInt::getFalse(context_)};
       }
       const auto found = variables_.find(symbol->name);
       if (found == variables_.end()) {
@@ -267,7 +295,7 @@ class FunctionEmitter {
       variables_[name] = emit_expression(element(*binding, 1));
     }
 
-    Value result{"void", ""};
+    Value result{llvm::Type::getVoidTy(context_), nullptr};
     for (std::size_t index = 2; index < list.elements.size(); ++index) {
       result = emit_expression(element(list, index));
     }
@@ -279,7 +307,7 @@ class FunctionEmitter {
     if (list.elements.size() < 2) {
       fail(form.location, "do expression requires at least one body form");
     }
-    Value result{"void", ""};
+    Value result{llvm::Type::getVoidTy(context_), nullptr};
     for (std::size_t index = 1; index < list.elements.size(); ++index) {
       result = emit_expression(element(list, index));
     }
@@ -292,13 +320,14 @@ class FunctionEmitter {
     }
 
     const auto scrutinee = emit_expression(element(list, 1));
-    const auto done_label = "match.end." + std::to_string(next_label_++);
-    auto next_test_label = "match.test." + std::to_string(next_label_++);
-    out_ << "  br label %" << next_test_label << "\n";
+    auto* function = builder_.GetInsertBlock()->getParent();
+    auto* done_block = llvm::BasicBlock::Create(context_, "match.end", function);
+    auto* next_test_block = llvm::BasicBlock::Create(context_, "match.test", function);
+    builder_.CreateBr(next_test_block);
 
     bool bool_has_true = false;
     bool bool_has_false = false;
-    if (scrutinee.llvm_type == "i1") {
+    if (scrutinee.type->isIntegerTy(1)) {
       for (std::size_t index = 2; index < list.elements.size(); ++index) {
         const auto* arm = as_list(element(list, index));
         if (arm != nullptr && arm->elements.size() == 2) {
@@ -311,10 +340,10 @@ class FunctionEmitter {
         }
       }
     }
-    const bool bool_exhaustive = scrutinee.llvm_type == "i1" && bool_has_true && bool_has_false;
+    const bool bool_exhaustive = scrutinee.type->isIntegerTy(1) && bool_has_true && bool_has_false;
 
     std::vector<ArmResult> arm_results;
-    std::optional<std::string> result_type;
+    llvm::Type* result_type = nullptr;
 
     for (std::size_t index = 2; index < list.elements.size(); ++index) {
       const auto* arm = as_list(element(list, index));
@@ -322,15 +351,17 @@ class FunctionEmitter {
         fail(element(list, index).location, "match arm requires a pattern and expression");
       }
 
-      const auto body_label = "match.arm." + std::to_string(next_label_++);
+      auto* body_block = llvm::BasicBlock::Create(context_, "match.arm", function);
       const auto has_next_arm = index + 1 < list.elements.size();
-      const auto following_test_label = has_next_arm ? "match.test." + std::to_string(next_label_++) : "";
-      const auto final_exhaustive_label = !has_next_arm && bool_exhaustive ? body_label : following_test_label;
+      auto* following_test_block = has_next_arm
+                                       ? llvm::BasicBlock::Create(context_, "match.test", function)
+                                       : nullptr;
+      auto* final_exhaustive_block = !has_next_arm && bool_exhaustive ? body_block : following_test_block;
 
-      out_ << next_test_label << ":\n";
-      const auto binding = emit_pattern_test(scrutinee, element(*arm, 0), body_label, final_exhaustive_label);
+      builder_.SetInsertPoint(next_test_block);
+      const auto binding = emit_pattern_test(scrutinee, element(*arm, 0), body_block, final_exhaustive_block);
 
-      out_ << body_label << ":\n";
+      builder_.SetInsertPoint(body_block);
       auto previous = variables_;
       if (binding.has_value()) {
         variables_[*binding] = scrutinee;
@@ -338,73 +369,70 @@ class FunctionEmitter {
       const auto arm_value = emit_expression(element(*arm, 1));
       variables_ = std::move(previous);
 
-      if (!result_type.has_value()) {
-        result_type = arm_value.llvm_type;
+      if (result_type == nullptr) {
+        result_type = arm_value.type;
       } else {
-        require_type(arm_value, *result_type, element(*arm, 1).location);
+        require_type(arm_value, result_type, element(*arm, 1).location);
       }
-      out_ << "  br label %" << done_label << "\n";
-      arm_results.push_back(ArmResult{arm_value, body_label});
 
-      next_test_label = following_test_label;
+      auto* arm_block = builder_.GetInsertBlock();
+      builder_.CreateBr(done_block);
+      arm_results.push_back(ArmResult{arm_value, arm_block});
+
+      next_test_block = following_test_block;
     }
 
-    if (!next_test_label.empty()) {
-      out_ << next_test_label << ":\n";
+    if (next_test_block != nullptr) {
+      builder_.SetInsertPoint(next_test_block);
       fail(form.location, "match expression must end with a catch-all arm");
     }
 
-    out_ << done_label << ":\n";
-    if (!result_type.has_value() || *result_type == "void") {
-      return Value{"void", ""};
+    builder_.SetInsertPoint(done_block);
+    if (result_type == nullptr || result_type->isVoidTy()) {
+      return Value{llvm::Type::getVoidTy(context_), nullptr};
     }
 
-    const auto temp = next_temp();
-    out_ << "  " << temp << " = phi " << *result_type;
-    for (std::size_t index = 0; index < arm_results.size(); ++index) {
-      if (index != 0) {
-        out_ << ",";
-      }
-      const auto& result = arm_results[index];
-      out_ << " [ " << result.value.ref << ", %" << result.label << " ]";
+    auto* phi = builder_.CreatePHI(result_type, static_cast<unsigned>(arm_results.size()));
+    for (const auto& result : arm_results) {
+      phi->addIncoming(result.value.value, result.block);
     }
-    out_ << "\n";
-    return Value{*result_type, temp};
+    return Value{result_type, phi};
   }
 
   std::optional<std::string> emit_pattern_test(const Value& scrutinee,
                                                const Form& pattern,
-                                               std::string_view body_label,
-                                               std::string_view next_label) {
+                                               llvm::BasicBlock* body_block,
+                                               llvm::BasicBlock* next_block) {
     if (const auto* symbol = as_symbol(pattern)) {
       if (symbol->name == "_") {
-        out_ << "  br label %" << body_label << "\n";
+        builder_.CreateBr(body_block);
         return std::nullopt;
       }
       if (symbol->name == "true" || symbol->name == "false") {
-        require_type(scrutinee, "i1", pattern.location);
-        const auto temp = next_temp();
-        out_ << "  " << temp << " = icmp eq i1 " << scrutinee.ref << ", "
-             << (symbol->name == "true" ? "1" : "0") << "\n";
-        emit_pattern_branch(pattern.location, temp, body_label, next_label);
+        require_type(scrutinee, llvm::Type::getInt1Ty(context_), pattern.location);
+        auto* expected = symbol->name == "true" ? llvm::ConstantInt::getTrue(context_)
+                                                : llvm::ConstantInt::getFalse(context_);
+        auto* condition = builder_.CreateICmpEQ(scrutinee.value, expected);
+        emit_pattern_branch(pattern.location, condition, body_block, next_block);
         return std::nullopt;
       }
 
-      out_ << "  br label %" << body_label << "\n";
+      builder_.CreateBr(body_block);
       return symbol->name;
     }
 
     if (const auto* integer = as_integer(pattern)) {
-      require_type(scrutinee, "i64", pattern.location);
-      const auto temp = next_temp();
-      out_ << "  " << temp << " = icmp eq i64 " << scrutinee.ref << ", " << integer->value << "\n";
-      emit_pattern_branch(pattern.location, temp, body_label, next_label);
+      auto* type = llvm::Type::getInt64Ty(context_);
+      require_type(scrutinee, type, pattern.location);
+      auto* expected = llvm::ConstantInt::get(type, integer->value, true);
+      auto* condition = builder_.CreateICmpEQ(scrutinee.value, expected);
+      emit_pattern_branch(pattern.location, condition, body_block, next_block);
       return std::nullopt;
     }
 
     if (is_unit(pattern)) {
-      require_type(scrutinee, "void", pattern.location);
-      out_ << "  br label %" << body_label << "\n";
+      require_type(scrutinee, llvm::Type::getVoidTy(context_), pattern.location);
+      builder_.CreateBr(body_block);
       return std::nullopt;
     }
 
@@ -412,13 +440,13 @@ class FunctionEmitter {
   }
 
   void emit_pattern_branch(SourceLocation location,
-                           std::string_view condition,
-                           std::string_view body_label,
-                           std::string_view next_label) {
-    if (next_label.empty()) {
+                           llvm::Value* condition,
+                           llvm::BasicBlock* body_block,
+                           llvm::BasicBlock* next_block) {
+    if (next_block == nullptr) {
       fail(location, "match expression must end with a catch-all arm");
     }
-    out_ << "  br i1 " << condition << ", label %" << body_label << ", label %" << next_label << "\n";
+    builder_.CreateCondBr(condition, body_block, next_block);
   }
 
   Value emit_arithmetic(const Form& form, const List& list, std::string_view op) {
@@ -427,25 +455,22 @@ class FunctionEmitter {
     }
     const auto left = emit_expression(element(list, 1));
     const auto right = emit_expression(element(list, 2));
-    require_type(right, left.llvm_type, element(list, 2).location);
-    if (left.llvm_type != "i64" && left.llvm_type != "i32") {
+    require_type(right, left.type, element(list, 2).location);
+    if (!left.type->isIntegerTy(64) && !left.type->isIntegerTy(32)) {
       fail(form.location, "arithmetic currently supports i32 and i64 values");
     }
 
-    std::string instruction;
+    llvm::Value* result = nullptr;
     if (op == "+") {
-      instruction = "add";
+      result = builder_.CreateAdd(left.value, right.value);
     } else if (op == "-") {
-      instruction = "sub";
+      result = builder_.CreateSub(left.value, right.value);
     } else if (op == "*") {
-      instruction = "mul";
+      result = builder_.CreateMul(left.value, right.value);
     } else {
-      instruction = "sdiv";
+      result = builder_.CreateSDiv(left.value, right.value);
     }
-    const auto temp = next_temp();
-    out_ << "  " << temp << " = " << instruction << ' ' << left.llvm_type << ' ' << left.ref << ", "
-         << right.ref << "\n";
-    return Value{left.llvm_type, temp};
+    return Value{left.type, result};
   }
 
   Value emit_comparison(const Form& form, const List& list, std::string_view op) {
@@ -454,25 +479,23 @@ class FunctionEmitter {
     }
     const auto left = emit_expression(element(list, 1));
     const auto right = emit_expression(element(list, 2));
-    require_type(right, left.llvm_type, element(list, 2).location);
-    std::string predicate;
+    require_type(right, left.type, element(list, 2).location);
+
+    llvm::CmpInst::Predicate predicate;
     if (op == "=") {
-      predicate = "eq";
+      predicate = llvm::CmpInst::ICMP_EQ;
     } else if (op == "!=") {
-      predicate = "ne";
+      predicate = llvm::CmpInst::ICMP_NE;
     } else if (op == "<") {
-      predicate = "slt";
+      predicate = llvm::CmpInst::ICMP_SLT;
     } else if (op == "<=") {
-      predicate = "sle";
+      predicate = llvm::CmpInst::ICMP_SLE;
     } else if (op == ">") {
-      predicate = "sgt";
+      predicate = llvm::CmpInst::ICMP_SGT;
     } else {
-      predicate = "sge";
+      predicate = llvm::CmpInst::ICMP_SGE;
     }
-    const auto temp = next_temp();
-    out_ << "  " << temp << " = icmp " << predicate << ' ' << left.llvm_type << ' ' << left.ref << ", "
-         << right.ref << "\n";
-    return Value{"i1", temp};
+    return Value{llvm::Type::getInt1Ty(context_), builder_.CreateICmp(predicate, left.value, right.value)};
   }
 
   Value emit_call(const Form& form, const List& list, const std::string& name) {
@@ -485,41 +508,33 @@ class FunctionEmitter {
       fail(form.location, "function call argument count mismatch");
     }
 
-    std::vector<Value> arguments;
+    std::vector<llvm::Value*> arguments;
     for (std::size_t index = 1; index < list.elements.size(); ++index) {
       auto argument = emit_expression(element(list, index));
       require_type(argument, signature.parameters[index - 1].second, element(list, index).location);
-      arguments.push_back(std::move(argument));
+      arguments.push_back(argument.value);
     }
 
-    const auto temp = signature.return_type == "void" ? "" : next_temp();
-    out_ << "  ";
-    if (signature.return_type != "void") {
-      out_ << temp << " = ";
+    auto* function = module_.getFunction(name);
+    if (function == nullptr) {
+      fail(form.location, "unknown function");
     }
-    out_ << "call " << signature.return_type << " @" << name << '(';
-    for (std::size_t index = 0; index < arguments.size(); ++index) {
-      if (index != 0) {
-        out_ << ", ";
-      }
-      out_ << arguments[index].llvm_type << ' ' << arguments[index].ref;
-    }
-    out_ << ")\n";
-    return Value{signature.return_type, temp};
+    auto* call = builder_.CreateCall(function, arguments);
+    return Value{signature.return_type, signature.return_type->isVoidTy() ? nullptr : call};
   }
 
-  void require_type(const Value& value, std::string_view expected, SourceLocation location) const {
-    if (value.llvm_type != expected) {
+  void require_type(const Value& value, llvm::Type* expected, SourceLocation location) const {
+    if (value.type != expected) {
       fail(location, "expression type mismatch");
     }
   }
 
+  llvm::LLVMContext& context_;
+  llvm::Module& module_;
+  llvm::IRBuilder<>& builder_;
   const std::unordered_map<std::string, FunctionSignature>& functions_;
   FunctionSignature signature_;
   std::unordered_map<std::string, Value> variables_;
-  std::ostringstream out_;
-  std::size_t next_temp_ = 0;
-  std::size_t next_label_ = 0;
 };
 
 }  // namespace
@@ -532,10 +547,14 @@ const Diagnostic& CodegenError::diagnostic() const {
 }
 
 std::string emit_llvm_ir(const Program& program) {
+  llvm::LLVMContext context;
+  llvm::Module module("termis", context);
+  llvm::IRBuilder<> builder(context);
+
   std::unordered_map<std::string, FunctionSignature> functions;
   for (const auto& node : program.forms) {
     if (node->kind == SemanticKind::function_declaration) {
-      auto signature = parse_signature(*node->form, program.types);
+      auto signature = parse_signature(context, *node->form, program.types);
       if (functions.contains(signature.name)) {
         fail(node->form->location, "function redefines existing function");
       }
@@ -543,17 +562,28 @@ std::string emit_llvm_ir(const Program& program) {
     }
   }
 
-  std::ostringstream out;
-  out << "; ModuleID = 'termis'\n";
   for (const auto& node : program.forms) {
     if (node->kind == SemanticKind::function_declaration) {
-      FunctionEmitter emitter(functions, functions.at(parse_signature(*node->form, program.types).name));
-      out << emitter.emit(*node->form) << '\n';
+      const auto signature = parse_signature(context, *node->form, program.types);
+      FunctionEmitter emitter(context, module, builder, functions, functions.at(signature.name));
+      emitter.emit(*node->form);
     } else if (node->kind != SemanticKind::type_declaration) {
       fail(node->form->location, "LLVM emission currently supports only type and function declarations");
     }
   }
-  return out.str();
+
+  std::string verifier_errors;
+  llvm::raw_string_ostream verifier_stream(verifier_errors);
+  if (llvm::verifyModule(module, &verifier_stream)) {
+    verifier_stream.flush();
+    fail(SourceLocation{}, "generated invalid LLVM IR: " + verifier_errors);
+  }
+
+  std::string ir;
+  llvm::raw_string_ostream stream(ir);
+  module.print(stream, nullptr);
+  stream.flush();
+  return ir;
 }
 
 }  // namespace termis

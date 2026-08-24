@@ -48,7 +48,7 @@ void emits_let_do_and_unit() {
   contains(ir, "define void @log()");
   contains(ir, "ret void");
   contains(ir, "define i64 @value()");
-  contains(ir, "add i64 40, 2");
+  contains(ir, "ret i64 42");
 }
 
 void emits_comparison_function() {
@@ -66,8 +66,8 @@ void emits_match_expression() {
         (false 0)))
   )");
 
-  contains(ir, "icmp eq i1 %flag, 1");
-  contains(ir, "icmp eq i1 %flag, 0");
+  contains(ir, "icmp eq i1 %flag, true");
+  contains(ir, "icmp eq i1 %flag, false");
   contains(ir, "phi i64");
 }
 

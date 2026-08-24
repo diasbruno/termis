@@ -1,13 +1,16 @@
-.PHONY: help configure build test clean compile-flags FORCE
+.PHONY: help configure build examples test clean compile-flags FORCE
 
 BUILD_DIR ?= build
 GENERATOR ?= Unix Makefiles
+EXAMPLE_SOURCES := $(wildcard examples/*.termis)
+EXAMPLE_BINS := $(patsubst examples/%.termis,$(BUILD_DIR)/examples/%,$(EXAMPLE_SOURCES))
 
 help:
 	@printf '%s\n' 'Termis development commands:'
 	@printf '%s\n' ''
 	@printf '%s\n' '  make configure  Configure the CMake build directory'
 	@printf '%s\n' '  make build      Build termisc'
+	@printf '%s\n' '  make examples   Build every example program'
 	@printf '%s\n' '  make test       Run the test suite'
 	@printf '%s\n' '  make compile-flags'
 	@printf '%s\n' '                  Generate compile_flags.txt for Clang tooling'
@@ -22,6 +25,12 @@ configure:
 
 build: configure
 	cmake --build $(BUILD_DIR)
+
+examples: build $(EXAMPLE_BINS)
+
+$(BUILD_DIR)/examples/%: examples/%.termis
+	@mkdir -p $(dir $@)
+	$(BUILD_DIR)/termisc -o $@ $<
 
 test: build
 	ctest --test-dir $(BUILD_DIR) --output-on-failure
