@@ -112,6 +112,63 @@ void collects_type_declarations() {
   require(pair->parameters.size() == 2, "expected Pair parameters");
 }
 
+void rejects_unknown_type_references() {
+  try {
+    (void)analyze("(type MissingBox Missing)");
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "unknown type name",
+            "expected unknown type diagnostic");
+    return;
+  }
+
+  require(false, "expected unknown type failure");
+}
+
+void rejects_missing_generic_arguments() {
+  try {
+    (void)analyze(R"(
+      (type Box (T) (product (value T)))
+      (type Bad Box)
+    )");
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "generic type requires type arguments",
+            "expected missing generic arguments diagnostic");
+    return;
+  }
+
+  require(false, "expected missing generic arguments failure");
+}
+
+void rejects_bad_generic_argument_count() {
+  try {
+    (void)analyze(R"(
+      (type Box (T) (product (value T)))
+      (type Bad (Box i32 bool))
+    )");
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "generic type argument count mismatch",
+            "expected generic arity diagnostic");
+    return;
+  }
+
+  require(false, "expected bad generic arity failure");
+}
+
+void rejects_applying_concrete_types() {
+  try {
+    (void)analyze(R"(
+      (type UserId u64)
+      (type Bad (UserId i32))
+    )");
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "type does not accept type arguments",
+            "expected concrete type application diagnostic");
+    return;
+  }
+
+  require(false, "expected concrete type application failure");
+}
+
 }  // namespace
 
 int main() {
@@ -120,4 +177,8 @@ int main() {
   rejects_bad_type_body();
   accepts_empty_lists();
   collects_type_declarations();
+  rejects_unknown_type_references();
+  rejects_missing_generic_arguments();
+  rejects_bad_generic_argument_count();
+  rejects_applying_concrete_types();
 }

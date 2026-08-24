@@ -108,5 +108,6 @@ TypePtr parse_type(const Form& form);
 TypeDeclaration parse_type_declaration(const Form& form);
 TypePtr clone_type(const Type& type);
 TypePtr instantiate_type_application(const Type& application, const TypeEnvironment& environment);
+void validate_type_references(const TypeEnvironment& environment);
 
 }  // namespace termis

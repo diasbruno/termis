@@ -413,4 +413,89 @@ TypePtr instantiate_type_application(const Type& application, const TypeEnvironm
   return substitute_type_impl(*declaration->body, substitutions);
 }
 
+namespace {
+
+void validate_type_reference(const Type& type,
+                             const TypeEnvironment& environment,
+                             const std::unordered_set<std::string>& parameters) {
+  switch (type.kind) {
+    case TypeKind::primitive:
+      return;
+
+    case TypeKind::name: {
+      if (parameters.contains(type.name)) {
+        return;
+      }
+      const auto* declaration = environment.find(type.name);
+      if (declaration == nullptr) {
+        fail(type.location, "unknown type name");
+      }
+      if (!declaration->parameters.empty()) {
+        fail(type.location, "generic type requires type arguments");
+      }
+      return;
+    }
+
+    case TypeKind::application: {
+      if (parameters.contains(type.name)) {
+        fail(type.location, "type parameter cannot be used as a type constructor");
+      }
+      const auto* declaration = environment.find(type.name);
+      if (declaration == nullptr) {
+        fail(type.location, "unknown generic type name");
+      }
+      if (declaration->parameters.empty()) {
+        fail(type.location, "type does not accept type arguments");
+      }
+      if (declaration->parameters.size() != type.arguments.size()) {
+        fail(type.location, "generic type argument count mismatch");
+      }
+      for (const auto& argument : type.arguments) {
+        validate_type_reference(*argument, environment, parameters);
+      }
+      return;
+    }
+
+    case TypeKind::pointer:
+    case TypeKind::array:
+    case TypeKind::slice:
+      validate_type_reference(*type.element, environment, parameters);
+      return;
+
+    case TypeKind::function:
+      for (const auto& argument : type.arguments) {
+        validate_type_reference(*argument, environment, parameters);
+      }
+      validate_type_reference(*type.result, environment, parameters);
+      return;
+
+    case TypeKind::product:
+    case TypeKind::union_:
+      for (const auto& field : type.fields) {
+        validate_type_reference(*field.type, environment, parameters);
+      }
+      return;
+
+    case TypeKind::sum:
+      for (const auto& alternative : type.alternatives) {
+        for (const auto& payload : alternative.payload) {
+          validate_type_reference(*payload, environment, parameters);
+        }
+      }
+      return;
+  }
+}
+
+}  // namespace
+
+void validate_type_references(const TypeEnvironment& environment) {
+  for (const auto& declaration : environment.declarations()) {
+    std::unordered_set<std::string> parameters;
+    for (const auto& parameter : declaration.parameters) {
+      parameters.insert(parameter.name);
+    }
+    validate_type_reference(*declaration.body, environment, parameters);
+  }
+}
+
 }  // namespace termis

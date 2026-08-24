@@ -134,6 +134,7 @@ Program analyze_forms(const std::vector<FormPtr>& forms) {
     }
     program.forms.push_back(std::move(node));
   }
+  validate_type_references(program.types);
   return program;
 }
 
