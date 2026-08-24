@@ -72,7 +72,7 @@ void parses_core_type_constructors() {
   const auto array = parse_one_type("(array u8 256)");
   require(array->kind == termis::TypeKind::array, "expected array type");
   require(array->element->primitive == termis::PrimitiveType::u8, "expected array element");
-  require(array->array_size != nullptr, "expected array size form");
+  require(array->array_size == 256, "expected array size");
 
   const auto slice = parse_one_type("(slice u8)");
   require(slice->kind == termis::TypeKind::slice, "expected slice type");

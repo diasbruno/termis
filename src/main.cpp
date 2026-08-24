@@ -1,3 +1,4 @@
+#include "layout.hpp"
 #include "reader.hpp"
 #include "semantic.hpp"
 #include "type.hpp"
@@ -78,6 +79,15 @@ int main(int argc, char** argv) {
   try {
     const auto forms = termis::read_forms(buffer.str());
     const auto program = termis::analyze_forms(forms);
+    termis::LayoutEngine layout_engine(program.types);
+    std::size_t concrete_layouts = 0;
+    for (const auto& declaration : program.types.declarations()) {
+      if (declaration.parameters.empty()) {
+        (void)layout_engine.compute(*declaration.body);
+        ++concrete_layouts;
+      }
+    }
+
     std::cout << "parsed " << forms.size() << " top-level form";
     if (forms.size() != 1) {
       std::cout << 's';
@@ -88,6 +98,10 @@ int main(int argc, char** argv) {
     }
     std::cout << ", collected " << program.types.size() << " type declaration";
     if (program.types.size() != 1) {
+      std::cout << 's';
+    }
+    std::cout << ", computed " << concrete_layouts << " concrete layout";
+    if (concrete_layouts != 1) {
       std::cout << 's';
     }
     std::cout << '\n';
@@ -105,6 +119,11 @@ int main(int argc, char** argv) {
     const auto& diagnostic = error.diagnostic();
     std::cerr << input_path << ':' << diagnostic.location.line << ':'
               << diagnostic.location.column << ": type error: " << diagnostic.message << '\n';
+    return EXIT_FAILURE;
+  } catch (const termis::LayoutError& error) {
+    const auto& diagnostic = error.diagnostic();
+    std::cerr << input_path << ':' << diagnostic.location.line << ':'
+              << diagnostic.location.column << ": layout error: " << diagnostic.message << '\n';
     return EXIT_FAILURE;
   }
 

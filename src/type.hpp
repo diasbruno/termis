@@ -2,6 +2,7 @@
 
 #include "reader.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -75,7 +76,7 @@ struct Type {
   std::vector<Field> fields;
   std::vector<SumAlternative> alternatives;
 
-  const Form* array_size = nullptr;
+  std::int64_t array_size = 0;
 };
 
 struct TypeParameter {
@@ -95,6 +96,7 @@ class TypeEnvironment {
   void declare(TypeDeclaration declaration);
 
   const TypeDeclaration* find(std::string_view name) const;
+  const std::vector<TypeDeclaration>& declarations() const;
   std::size_t size() const;
 
  private:

@@ -126,9 +126,13 @@ TypePtr parse_type_list(const Form& form, const List& list) {
     if (list.elements.size() != 3) {
       fail(form.location, "array type requires an element type and compile-time size");
     }
+    const auto* size = std::get_if<IntegerLiteral>(&element(list, 2).kind);
+    if (size == nullptr) {
+      fail(element(list, 2).location, "array size must be an integer literal");
+    }
     auto type = make_type(TypeKind::array, form.location);
     type->element = parse_type(element(list, 1));
-    type->array_size = &element(list, 2);
+    type->array_size = size->value;
     return type;
   }
 
@@ -278,6 +282,10 @@ const TypeDeclaration* TypeEnvironment::find(std::string_view name) const {
     return nullptr;
   }
   return &declarations_[found->second];
+}
+
+const std::vector<TypeDeclaration>& TypeEnvironment::declarations() const {
+  return declarations_;
 }
 
 std::size_t TypeEnvironment::size() const {

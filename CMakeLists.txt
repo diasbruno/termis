@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(termis_core
+  src/layout.cpp
   src/reader.cpp
   src/semantic.cpp
   src/type.cpp)
@@ -68,3 +69,14 @@ target_compile_options(type_tests PRIVATE
 
 add_test(NAME type_tests
   COMMAND type_tests)
+
+add_executable(layout_tests
+  tests/layout_tests.cpp)
+
+target_link_libraries(layout_tests PRIVATE termis_core)
+
+target_compile_options(layout_tests PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
+
+add_test(NAME layout_tests
+  COMMAND layout_tests)
