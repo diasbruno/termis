@@ -1,5 +1,6 @@
 #include "reader.hpp"
 #include "semantic.hpp"
+#include "type.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -95,6 +96,11 @@ int main(int argc, char** argv) {
     const auto& diagnostic = error.diagnostic();
     std::cerr << input_path << ':' << diagnostic.location.line << ':'
               << diagnostic.location.column << ": semantic error: " << diagnostic.message << '\n';
+    return EXIT_FAILURE;
+  } catch (const termis::TypeError& error) {
+    const auto& diagnostic = error.diagnostic();
+    std::cerr << input_path << ':' << diagnostic.location.line << ':'
+              << diagnostic.location.column << ": type error: " << diagnostic.message << '\n';
     return EXIT_FAILURE;
   }
 

@@ -1,4 +1,5 @@
 #include "semantic.hpp"
+#include "type.hpp"
 
 #include <utility>
 
@@ -72,8 +73,10 @@ SemanticKind classify(const Form& form) {
     require_symbol(list_element(form, 1), "type declaration name must be a symbol");
     if (element_count(form) == 4) {
       require_list(list_element(form, 2), "type parameters must be a list");
+      (void)parse_type(list_element(form, 3));
     } else {
       require_exact_count(form, 3, "type declaration expects either 3 or 4 forms");
+      (void)parse_type(list_element(form, 2));
     }
     return SemanticKind::type_declaration;
   }

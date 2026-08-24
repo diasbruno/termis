@@ -1,5 +1,6 @@
 #include "reader.hpp"
 #include "semantic.hpp"
+#include "type.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -74,6 +75,18 @@ void rejects_bad_type_declaration() {
   require(false, "expected bad type declaration failure");
 }
 
+void rejects_bad_type_body() {
+  try {
+    (void)analyze("(type Buffer (array u8))");
+  } catch (const termis::TypeError& error) {
+    require(error.diagnostic().message == "array type requires an element type and compile-time size",
+            "expected type body diagnostic");
+    return;
+  }
+
+  require(false, "expected bad type body failure");
+}
+
 void accepts_empty_lists() {
   auto program = analyze("()");
 
@@ -87,5 +100,6 @@ void accepts_empty_lists() {
 int main() {
   recognizes_core_forms();
   rejects_bad_type_declaration();
+  rejects_bad_type_body();
   accepts_empty_lists();
 }
