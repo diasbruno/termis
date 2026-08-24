@@ -1,3 +1,4 @@
+#include "codegen.hpp"
 #include "layout.hpp"
 #include "reader.hpp"
 #include "semantic.hpp"
@@ -19,6 +20,7 @@ void print_help(std::ostream& out) {
       << "\n"
       << "Options:\n"
       << "  -h, --help       Show this help message\n"
+      << "  --dump-llvm      Emit LLVM IR to stdout after validation\n"
       << "  --version        Show compiler version\n";
 }
 
@@ -35,6 +37,7 @@ int main(int argc, char** argv) {
   }
 
   std::string_view input_path;
+  bool dump_llvm = false;
 
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
@@ -47,6 +50,11 @@ int main(int argc, char** argv) {
     if (arg == "--version") {
       print_version(std::cout);
       return EXIT_SUCCESS;
+    }
+
+    if (arg == "--dump-llvm") {
+      dump_llvm = true;
+      continue;
     }
 
     if (!arg.empty() && arg.front() == '-') {
@@ -88,23 +96,27 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::cout << "parsed " << forms.size() << " top-level form";
-    if (forms.size() != 1) {
-      std::cout << 's';
+    if (dump_llvm) {
+      std::cout << termis::emit_llvm_ir(program);
+    } else {
+      std::cout << "parsed " << forms.size() << " top-level form";
+      if (forms.size() != 1) {
+        std::cout << 's';
+      }
+      std::cout << ", recognized " << program.forms.size() << " semantic form";
+      if (program.forms.size() != 1) {
+        std::cout << 's';
+      }
+      std::cout << ", collected " << program.types.size() << " type declaration";
+      if (program.types.size() != 1) {
+        std::cout << 's';
+      }
+      std::cout << ", computed " << concrete_layouts << " concrete layout";
+      if (concrete_layouts != 1) {
+        std::cout << 's';
+      }
+      std::cout << '\n';
     }
-    std::cout << ", recognized " << program.forms.size() << " semantic form";
-    if (program.forms.size() != 1) {
-      std::cout << 's';
-    }
-    std::cout << ", collected " << program.types.size() << " type declaration";
-    if (program.types.size() != 1) {
-      std::cout << 's';
-    }
-    std::cout << ", computed " << concrete_layouts << " concrete layout";
-    if (concrete_layouts != 1) {
-      std::cout << 's';
-    }
-    std::cout << '\n';
   } catch (const termis::ReadError& error) {
     const auto& diagnostic = error.diagnostic();
     std::cerr << input_path << ':' << diagnostic.location.line << ':'
@@ -124,6 +136,11 @@ int main(int argc, char** argv) {
     const auto& diagnostic = error.diagnostic();
     std::cerr << input_path << ':' << diagnostic.location.line << ':'
               << diagnostic.location.column << ": layout error: " << diagnostic.message << '\n';
+    return EXIT_FAILURE;
+  } catch (const termis::CodegenError& error) {
+    const auto& diagnostic = error.diagnostic();
+    std::cerr << input_path << ':' << diagnostic.location.line << ':'
+              << diagnostic.location.column << ": codegen error: " << diagnostic.message << '\n';
     return EXIT_FAILURE;
   }
 

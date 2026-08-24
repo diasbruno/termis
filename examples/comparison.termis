@@ -1,0 +1,5 @@
+(fn greater ((a i64) (b i64)) bool
+  (> a b))
+
+(fn main () bool
+  (greater 20 10))

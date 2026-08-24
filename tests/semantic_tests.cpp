@@ -29,7 +29,7 @@ void recognizes_core_forms() {
     (match value (_ .))
     (const size 42)
     (+ 1 2)
-    (if ok 1 0)
+    (call ok 1 0)
     ()
     (list 1 2)
     ((f) 1)
@@ -52,7 +52,7 @@ void recognizes_core_forms() {
   require(program.forms[6]->kind == termis::SemanticKind::application,
           "expected application");
   require(program.forms[7]->kind == termis::SemanticKind::application,
-          "expected if to be an application");
+          "expected call to be an application");
   require(program.forms[8]->kind == termis::SemanticKind::list_expression,
           "expected empty list expression");
   require(program.forms[9]->kind == termis::SemanticKind::list_expression,

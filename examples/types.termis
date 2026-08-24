@@ -1,0 +1,7 @@
+(type UserId u64)
+
+(fn same-user ((id UserId)) UserId
+  id)
+
+(fn main () i64
+  (same-user 42))

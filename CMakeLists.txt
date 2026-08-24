@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(termis_core
+  src/codegen.cpp
   src/layout.cpp
   src/reader.cpp
   src/semantic.cpp
@@ -36,6 +37,9 @@ add_test(NAME termisc_version
 
 add_test(NAME termisc_help
   COMMAND termisc --help)
+
+add_test(NAME termisc_dump_llvm
+  COMMAND termisc --dump-llvm ${CMAKE_CURRENT_SOURCE_DIR}/examples/add.termis)
 
 add_executable(reader_tests
   tests/reader_tests.cpp)
@@ -80,3 +84,14 @@ target_compile_options(layout_tests PRIVATE
 
 add_test(NAME layout_tests
   COMMAND layout_tests)
+
+add_executable(codegen_tests
+  tests/codegen_tests.cpp)
+
+target_link_libraries(codegen_tests PRIVATE termis_core)
+
+target_compile_options(codegen_tests PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
+
+add_test(NAME codegen_tests
+  COMMAND codegen_tests)
