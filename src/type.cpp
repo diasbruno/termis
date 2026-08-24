@@ -1,6 +1,7 @@
 #include "type.hpp"
 
 #include <array>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -411,6 +412,163 @@ TypePtr instantiate_type_application(const Type& application, const TypeEnvironm
   }
 
   return substitute_type_impl(*declaration->body, substitutions);
+}
+
+namespace {
+
+std::string primitive_name(PrimitiveType primitive) {
+  switch (primitive) {
+    case PrimitiveType::i8:
+      return "i8";
+    case PrimitiveType::i16:
+      return "i16";
+    case PrimitiveType::i32:
+      return "i32";
+    case PrimitiveType::i64:
+      return "i64";
+    case PrimitiveType::u8:
+      return "u8";
+    case PrimitiveType::u16:
+      return "u16";
+    case PrimitiveType::u32:
+      return "u32";
+    case PrimitiveType::u64:
+      return "u64";
+    case PrimitiveType::f32:
+      return "f32";
+    case PrimitiveType::f64:
+      return "f64";
+    case PrimitiveType::bool_:
+      return "bool";
+    case PrimitiveType::unit:
+      return "unit";
+    case PrimitiveType::void_:
+      return "void";
+  }
+}
+
+void append_type_string(std::ostream& out, const Type& type) {
+  switch (type.kind) {
+    case TypeKind::primitive:
+      out << primitive_name(type.primitive);
+      return;
+
+    case TypeKind::name:
+      out << type.name;
+      return;
+
+    case TypeKind::pointer:
+      out << "(& ";
+      append_type_string(out, *type.element);
+      out << ')';
+      return;
+
+    case TypeKind::array:
+      out << "(array ";
+      append_type_string(out, *type.element);
+      out << ' ' << type.array_size << ')';
+      return;
+
+    case TypeKind::slice:
+      out << "(slice ";
+      append_type_string(out, *type.element);
+      out << ')';
+      return;
+
+    case TypeKind::function:
+      out << "(fn (";
+      for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+        if (index != 0) {
+          out << ' ';
+        }
+        append_type_string(out, *type.arguments[index]);
+      }
+      out << ") ";
+      append_type_string(out, *type.result);
+      out << ')';
+      return;
+
+    case TypeKind::product:
+      out << "(product";
+      for (const auto& field : type.fields) {
+        out << " (" << field.name << ' ';
+        append_type_string(out, *field.type);
+        out << ')';
+      }
+      out << ')';
+      return;
+
+    case TypeKind::sum:
+      out << "(sum";
+      for (const auto& alternative : type.alternatives) {
+        if (alternative.payload.empty()) {
+          out << ' ' << alternative.name;
+        } else {
+          out << " (" << alternative.name;
+          for (const auto& payload : alternative.payload) {
+            out << ' ';
+            append_type_string(out, *payload);
+          }
+          out << ')';
+        }
+      }
+      out << ')';
+      return;
+
+    case TypeKind::union_:
+      out << "(union";
+      for (const auto& field : type.fields) {
+        out << " (" << field.name << ' ';
+        append_type_string(out, *field.type);
+        out << ')';
+      }
+      out << ')';
+      return;
+
+    case TypeKind::application:
+      out << '(' << type.name;
+      for (const auto& argument : type.arguments) {
+        out << ' ';
+        append_type_string(out, *argument);
+      }
+      out << ')';
+      return;
+  }
+}
+
+}  // namespace
+
+std::string type_to_string(const Type& type) {
+  std::ostringstream out;
+  append_type_string(out, type);
+  return out.str();
+}
+
+const MonomorphizedType& MonomorphizationRegistry::intern(const Type& application,
+                                                         const TypeEnvironment& environment) {
+  if (application.kind != TypeKind::application) {
+    fail(application.location, "expected type application");
+  }
+
+  const auto key = type_to_string(application);
+  const auto existing = instantiation_indexes_.find(key);
+  if (existing != instantiation_indexes_.end()) {
+    return instantiations_[existing->second];
+  }
+
+  auto instantiated = instantiate_type_application(application, environment);
+  const auto index = instantiations_.size();
+  instantiation_indexes_.emplace(key, index);
+  instantiations_.push_back(MonomorphizedType{key, std::move(instantiated)});
+  return instantiations_.back();
+}
+
+const std::vector<MonomorphizedType>& MonomorphizationRegistry::instantiations() const {
+  return instantiations_;
+}
+
+std::size_t MonomorphizationRegistry::size() const {
+  return instantiations_.size();
 }
 
 namespace {

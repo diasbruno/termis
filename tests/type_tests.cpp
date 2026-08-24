@@ -199,6 +199,38 @@ void instantiates_nested_generic_type_declarations() {
   require(instantiated->fields[0].type->name == "Pair", "expected nested Pair application");
 }
 
+void formats_type_applications() {
+  const auto type = parse_one_type("(Pair (& i32) (array bool 4))");
+
+  require(termis::type_to_string(*type) == "(Pair (& i32) (array bool 4))",
+          "expected canonical type application string");
+}
+
+void interns_generic_instantiations() {
+  termis::TypeEnvironment environment;
+  auto forms = termis::read_forms("(type Pair (A B) (product (first A) (second B)))");
+  environment.declare(termis::parse_type_declaration(*forms[0]));
+
+  const auto first_application = parse_one_type("(Pair i32 bool)");
+  const auto second_application = parse_one_type("(Pair i32 bool)");
+  const auto other_application = parse_one_type("(Pair bool i32)");
+
+  termis::MonomorphizationRegistry registry;
+  const auto& first = registry.intern(*first_application, environment);
+  const auto first_key = first.key;
+  const auto& second = registry.intern(*second_application, environment);
+  const auto second_key = second.key;
+  const auto& other = registry.intern(*other_application, environment);
+  const auto other_key = other.key;
+
+  require(registry.size() == 2, "expected unique generic instantiations");
+  require(first_key == "(Pair i32 bool)", "expected first instantiation key");
+  require(second_key == first_key, "expected repeated instantiation key");
+  require(other_key == "(Pair bool i32)", "expected distinct instantiation key");
+  require(registry.instantiations()[0].type->kind == termis::TypeKind::product,
+          "expected instantiated type body");
+}
+
 void rejects_bad_generic_arity() {
   try {
     termis::TypeEnvironment environment;
@@ -229,5 +261,7 @@ int main() {
   rejects_duplicate_type_declarations();
   instantiates_generic_type_declarations();
   instantiates_nested_generic_type_declarations();
+  formats_type_applications();
+  interns_generic_instantiations();
   rejects_bad_generic_arity();
 }

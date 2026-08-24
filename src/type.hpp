@@ -104,10 +104,28 @@ class TypeEnvironment {
   std::unordered_map<std::string, std::size_t> declaration_indexes_;
 };
 
+struct MonomorphizedType {
+  std::string key;
+  TypePtr type;
+};
+
+class MonomorphizationRegistry {
+ public:
+  const MonomorphizedType& intern(const Type& application, const TypeEnvironment& environment);
+
+  const std::vector<MonomorphizedType>& instantiations() const;
+  std::size_t size() const;
+
+ private:
+  std::vector<MonomorphizedType> instantiations_;
+  std::unordered_map<std::string, std::size_t> instantiation_indexes_;
+};
+
 TypePtr parse_type(const Form& form);
 TypeDeclaration parse_type_declaration(const Form& form);
 TypePtr clone_type(const Type& type);
 TypePtr instantiate_type_application(const Type& application, const TypeEnvironment& environment);
+std::string type_to_string(const Type& type);
 void validate_type_references(const TypeEnvironment& environment);
 
 }  // namespace termis
