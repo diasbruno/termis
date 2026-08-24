@@ -1,4 +1,5 @@
 #include "reader.hpp"
+#include "semantic.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -75,8 +76,13 @@ int main(int argc, char** argv) {
 
   try {
     const auto forms = termis::read_forms(buffer.str());
+    const auto program = termis::analyze_forms(forms);
     std::cout << "parsed " << forms.size() << " top-level form";
     if (forms.size() != 1) {
+      std::cout << 's';
+    }
+    std::cout << ", recognized " << program.forms.size() << " semantic form";
+    if (program.forms.size() != 1) {
       std::cout << 's';
     }
     std::cout << '\n';
@@ -84,6 +90,11 @@ int main(int argc, char** argv) {
     const auto& diagnostic = error.diagnostic();
     std::cerr << input_path << ':' << diagnostic.location.line << ':'
               << diagnostic.location.column << ": reader error: " << diagnostic.message << '\n';
+    return EXIT_FAILURE;
+  } catch (const termis::SemanticError& error) {
+    const auto& diagnostic = error.diagnostic();
+    std::cerr << input_path << ':' << diagnostic.location.line << ':'
+              << diagnostic.location.column << ": semantic error: " << diagnostic.message << '\n';
     return EXIT_FAILURE;
   }
 

@@ -1,0 +1,135 @@
+#include "semantic.hpp"
+
+#include <utility>
+
+namespace termis {
+namespace {
+
+const Symbol* as_symbol(const Form& form) {
+  return std::get_if<Symbol>(&form.kind);
+}
+
+const List* as_list(const Form& form) {
+  return std::get_if<List>(&form.kind);
+}
+
+std::size_t element_count(const Form& form) {
+  if (const auto* list = as_list(form)) {
+    return list->elements.size();
+  }
+  return 0;
+}
+
+const Form& list_element(const Form& form, std::size_t index) {
+  return *as_list(form)->elements[index];
+}
+
+void require_count_at_least(const Form& form, std::size_t minimum, std::string message) {
+  if (element_count(form) < minimum) {
+    throw SemanticError(Diagnostic{form.location, std::move(message)});
+  }
+}
+
+void require_exact_count(const Form& form, std::size_t expected, std::string message) {
+  if (element_count(form) != expected) {
+    throw SemanticError(Diagnostic{form.location, std::move(message)});
+  }
+}
+
+void require_symbol(const Form& form, std::string message) {
+  if (as_symbol(form) == nullptr) {
+    throw SemanticError(Diagnostic{form.location, std::move(message)});
+  }
+}
+
+void require_list(const Form& form, std::string message) {
+  if (as_list(form) == nullptr) {
+    throw SemanticError(Diagnostic{form.location, std::move(message)});
+  }
+}
+
+SemanticKind classify(const Form& form) {
+  const auto* list = as_list(form);
+  if (list == nullptr) {
+    return SemanticKind::atom;
+  }
+
+  if (list->elements.empty()) {
+    return SemanticKind::list_expression;
+  }
+
+  const auto* head = as_symbol(*list->elements.front());
+  if (head == nullptr) {
+    return SemanticKind::list_expression;
+  }
+
+  if (head->name == "list") {
+    return SemanticKind::list_expression;
+  }
+
+  if (head->name == "type") {
+    require_count_at_least(form, 3, "type declaration requires a name and body");
+    require_symbol(list_element(form, 1), "type declaration name must be a symbol");
+    if (element_count(form) == 4) {
+      require_list(list_element(form, 2), "type parameters must be a list");
+    } else {
+      require_exact_count(form, 3, "type declaration expects either 3 or 4 forms");
+    }
+    return SemanticKind::type_declaration;
+  }
+
+  if (head->name == "fn") {
+    require_count_at_least(form, 5, "function declaration requires name, parameters, return type, and body");
+    require_symbol(list_element(form, 1), "function name must be a symbol");
+    require_list(list_element(form, 2), "function parameters must be a list");
+    return SemanticKind::function_declaration;
+  }
+
+  if (head->name == "let") {
+    require_count_at_least(form, 3, "let expression requires bindings and a body");
+    require_list(list_element(form, 1), "let bindings must be a list");
+    return SemanticKind::let_expression;
+  }
+
+  if (head->name == "do") {
+    require_count_at_least(form, 2, "do expression requires at least one body form");
+    return SemanticKind::do_expression;
+  }
+
+  if (head->name == "match") {
+    require_count_at_least(form, 3, "match expression requires a value and at least one arm");
+    return SemanticKind::match_expression;
+  }
+
+  if (head->name == "const") {
+    require_exact_count(form, 3, "const declaration requires a name and value");
+    require_symbol(list_element(form, 1), "const name must be a symbol");
+    return SemanticKind::const_declaration;
+  }
+
+  return SemanticKind::application;
+}
+
+SemanticNodePtr analyze_form(const Form& form) {
+  return std::make_unique<SemanticNode>(SemanticNode{classify(form), &form});
+}
+
+}  // namespace
+
+SemanticError::SemanticError(Diagnostic diagnostic)
+    : std::runtime_error(diagnostic.message), diagnostic_(std::move(diagnostic)) {}
+
+const Diagnostic& SemanticError::diagnostic() const {
+  return diagnostic_;
+}
+
+Program analyze_forms(const std::vector<FormPtr>& forms) {
+  Program program;
+  program.forms.reserve(forms.size());
+  for (const auto& form : forms) {
+    program.forms.push_back(analyze_form(*form));
+  }
+  return program;
+}
+
+}  // namespace termis

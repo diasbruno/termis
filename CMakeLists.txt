@@ -10,7 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(termis_core
-  src/reader.cpp)
+  src/reader.cpp
+  src/semantic.cpp)
 
 target_include_directories(termis_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -44,3 +45,14 @@ target_compile_options(reader_tests PRIVATE
 
 add_test(NAME reader_tests
   COMMAND reader_tests)
+
+add_executable(semantic_tests
+  tests/semantic_tests.cpp)
+
+target_link_libraries(semantic_tests PRIVATE termis_core)
+
+target_compile_options(semantic_tests PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
+
+add_test(NAME semantic_tests
+  COMMAND semantic_tests)
