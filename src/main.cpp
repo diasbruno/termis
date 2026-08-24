@@ -1,5 +1,10 @@
+#include "reader.hpp"
+
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <string_view>
 
 namespace {
@@ -26,6 +31,8 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
+  std::string_view input_path;
+
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
 
@@ -38,8 +45,47 @@ int main(int argc, char** argv) {
       print_version(std::cout);
       return EXIT_SUCCESS;
     }
+
+    if (!arg.empty() && arg.front() == '-') {
+      std::cerr << "termisc: unknown option: " << arg << '\n';
+      return EXIT_FAILURE;
+    }
+
+    if (!input_path.empty()) {
+      std::cerr << "termisc: expected one input file\n";
+      return EXIT_FAILURE;
+    }
+
+    input_path = arg;
   }
 
-  std::cerr << "termisc: no compiler pipeline is implemented yet\n";
-  return EXIT_FAILURE;
+  if (input_path.empty()) {
+    std::cerr << "termisc: expected an input file\n";
+    return EXIT_FAILURE;
+  }
+
+  std::ifstream input{std::string(input_path)};
+  if (!input) {
+    std::cerr << "termisc: unable to open input file: " << input_path << '\n';
+    return EXIT_FAILURE;
+  }
+
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+
+  try {
+    const auto forms = termis::read_forms(buffer.str());
+    std::cout << "parsed " << forms.size() << " top-level form";
+    if (forms.size() != 1) {
+      std::cout << 's';
+    }
+    std::cout << '\n';
+  } catch (const termis::ReadError& error) {
+    const auto& diagnostic = error.diagnostic();
+    std::cerr << input_path << ':' << diagnostic.location.line << ':'
+              << diagnostic.location.column << ": reader error: " << diagnostic.message << '\n';
+    return EXIT_FAILURE;
+  }
+
+  return EXIT_SUCCESS;
 }

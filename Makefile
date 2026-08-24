@@ -33,6 +33,8 @@ compile_flags.txt: FORCE
 		printf '%s\n' \
 			'-xc++' \
 			'-std=c++20' \
+			'-I' \
+			'$(CURDIR)/src' \
 			'-Wall' \
 			'-Wextra' \
 			'-Wpedantic'; \

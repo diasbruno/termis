@@ -9,8 +9,19 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_library(termis_core
+  src/reader.cpp)
+
+target_include_directories(termis_core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+target_compile_options(termis_core PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
+
 add_executable(termisc
   src/main.cpp)
+
+target_link_libraries(termisc PRIVATE termis_core)
 
 target_compile_options(termisc PRIVATE
   $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
@@ -22,3 +33,14 @@ add_test(NAME termisc_version
 
 add_test(NAME termisc_help
   COMMAND termisc --help)
+
+add_executable(reader_tests
+  tests/reader_tests.cpp)
+
+target_link_libraries(reader_tests PRIVATE termis_core)
+
+target_compile_options(reader_tests PRIVATE
+  $<$<CXX_COMPILER_ID:Clang,GNU>:-Wall -Wextra -Wpedantic>)
+
+add_test(NAME reader_tests
+  COMMAND reader_tests)
