@@ -4,6 +4,7 @@
 #include "semantic.hpp"
 #include "type.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -14,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace {
 
@@ -24,6 +26,8 @@ void print_help(std::ostream& out) {
       << "\n"
       << "Options:\n"
       << "  -h, --help           Show this help message\n"
+      << "  -I, --module-path <path>\n"
+      << "                       Load every .termis file from path before input\n"
       << "  -o, --output <path>  Write the compiled binary to path\n"
       << "  --dump-llvm          Emit LLVM IR to stdout after validation\n"
       << "  --version            Show compiler version\n";
@@ -86,6 +90,127 @@ bool compile_ir_to_binary(std::string_view ir,
   return true;
 }
 
+std::optional<std::string> read_file(const std::filesystem::path& path) {
+  std::ifstream input{path};
+  if (!input) {
+    return std::nullopt;
+  }
+
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+const termis::Symbol* as_symbol(const termis::Form& form) {
+  return std::get_if<termis::Symbol>(&form.kind);
+}
+
+const termis::List* as_list(const termis::Form& form) {
+  return std::get_if<termis::List>(&form.kind);
+}
+
+std::optional<std::string> directive_module_name(const termis::Form& form,
+                                                 std::string_view directive) {
+  const auto* list = as_list(form);
+  if (list == nullptr || list->elements.size() < 2) {
+    return std::nullopt;
+  }
+  const auto* head = as_symbol(*list->elements[0]);
+  if (head == nullptr || head->name != directive) {
+    return std::nullopt;
+  }
+  const auto* name = as_symbol(*list->elements[1]);
+  if (name == nullptr) {
+    return std::nullopt;
+  }
+  return name->name;
+}
+
+bool append_module_forms(std::vector<termis::FormPtr>& destination,
+                         std::vector<termis::FormPtr> source,
+                         std::ostream& err) {
+  for (auto& form : source) {
+    const auto* list = as_list(*form);
+    if (auto imported = directive_module_name(*form, "import")) {
+      if (list->elements.size() != 2) {
+        err << "termisc: import expects exactly one module name\n";
+        return false;
+      }
+      continue;
+    }
+    if (auto module = directive_module_name(*form, "module")) {
+      auto* module_list = std::get_if<termis::List>(&form->kind);
+      if (module_list == nullptr || module_list->elements.size() < 2) {
+        err << "termisc: module expects a module name\n";
+        return false;
+      }
+      std::vector<termis::FormPtr> body;
+      body.reserve(module_list->elements.size() - 2);
+      for (std::size_t index = 2; index < module_list->elements.size(); ++index) {
+        body.push_back(std::move(module_list->elements[index]));
+      }
+      if (!append_module_forms(destination, std::move(body), err)) {
+        return false;
+      }
+      continue;
+    }
+    destination.push_back(std::move(form));
+  }
+  return true;
+}
+
+bool append_source_file(std::vector<termis::FormPtr>& destination,
+                        const std::filesystem::path& path,
+                        std::ostream& err) {
+  const auto source = read_file(path);
+  if (!source.has_value()) {
+    err << "termisc: unable to open module path file: " << path << '\n';
+    return false;
+  }
+  return append_module_forms(destination, termis::read_forms(*source), err);
+}
+
+bool append_module_path(std::vector<termis::FormPtr>& destination,
+                        const std::filesystem::path& path,
+                        std::ostream& err) {
+  std::error_code status_error;
+  const auto status = std::filesystem::status(path, status_error);
+  if (status_error || !std::filesystem::exists(status)) {
+    err << "termisc: module path does not exist: " << path << '\n';
+    return false;
+  }
+
+  if (std::filesystem::is_regular_file(status)) {
+    return append_source_file(destination, path, err);
+  }
+  if (!std::filesystem::is_directory(status)) {
+    err << "termisc: module path is not a file or directory: " << path << '\n';
+    return false;
+  }
+
+  std::vector<std::filesystem::path> files;
+  for (std::filesystem::recursive_directory_iterator iterator(path, status_error), end;
+       !status_error && iterator != end;
+       iterator.increment(status_error)) {
+    const auto& entry = *iterator;
+    if (entry.is_regular_file(status_error) && entry.path().extension() == ".termis") {
+      files.push_back(entry.path());
+    }
+  }
+  if (status_error) {
+    err << "termisc: unable to read module path: " << path << '\n';
+    return false;
+  }
+
+  std::sort(files.begin(), files.end());
+  for (const auto& file : files) {
+    if (!append_source_file(destination, file, err)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -96,6 +221,7 @@ int main(int argc, char** argv) {
 
   std::string_view input_path;
   std::optional<std::filesystem::path> output_path;
+  std::vector<std::filesystem::path> module_paths;
   bool dump_llvm = false;
 
   for (int i = 1; i < argc; ++i) {
@@ -113,6 +239,15 @@ int main(int argc, char** argv) {
 
     if (arg == "--dump-llvm") {
       dump_llvm = true;
+      continue;
+    }
+
+    if (arg == "-I" || arg == "--module-path") {
+      if (i + 1 >= argc) {
+        std::cerr << "termisc: " << arg << " requires a path\n";
+        return EXIT_FAILURE;
+      }
+      module_paths.emplace_back(argv[++i]);
       continue;
     }
 
@@ -143,17 +278,23 @@ int main(int argc, char** argv) {
     return EXIT_FAILURE;
   }
 
-  std::ifstream input{std::string(input_path)};
-  if (!input) {
+  const auto input_source = read_file(std::string(input_path));
+  if (!input_source.has_value()) {
     std::cerr << "termisc: unable to open input file: " << input_path << '\n';
     return EXIT_FAILURE;
   }
 
-  std::ostringstream buffer;
-  buffer << input.rdbuf();
-
   try {
-    const auto forms = termis::read_forms(buffer.str());
+    std::vector<termis::FormPtr> forms;
+    for (const auto& module_path : module_paths) {
+      if (!append_module_path(forms, module_path, std::cerr)) {
+        return EXIT_FAILURE;
+      }
+    }
+    if (!append_module_forms(forms, termis::read_forms(*input_source), std::cerr)) {
+      return EXIT_FAILURE;
+    }
+
     const auto program = termis::analyze_forms(forms);
     termis::LayoutEngine layout_engine(program.types);
     std::size_t concrete_layouts = 0;

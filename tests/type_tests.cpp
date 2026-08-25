@@ -27,15 +27,17 @@ void parses_primitive_types() {
     termis::PrimitiveType primitive;
   };
 
-  static constexpr std::array<Case, 13> cases = {{
+  static constexpr std::array<Case, 15> cases = {{
       {"i8", termis::PrimitiveType::i8},
       {"i16", termis::PrimitiveType::i16},
       {"i32", termis::PrimitiveType::i32},
       {"i64", termis::PrimitiveType::i64},
+      {"isize", termis::PrimitiveType::isize},
       {"u8", termis::PrimitiveType::u8},
       {"u16", termis::PrimitiveType::u16},
       {"u32", termis::PrimitiveType::u32},
       {"u64", termis::PrimitiveType::u64},
+      {"usize", termis::PrimitiveType::usize},
       {"f32", termis::PrimitiveType::f32},
       {"f64", termis::PrimitiveType::f64},
       {"bool", termis::PrimitiveType::bool_},

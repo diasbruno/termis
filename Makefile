@@ -30,7 +30,7 @@ examples: build $(EXAMPLE_BINS)
 
 $(BUILD_DIR)/examples/%: examples/%.termis
 	@mkdir -p $(dir $@)
-	$(BUILD_DIR)/termisc -o $@ $<
+	$(BUILD_DIR)/termisc -I std -o $@ $<
 
 test: build
 	ctest --test-dir $(BUILD_DIR) --output-on-failure

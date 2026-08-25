@@ -23,6 +23,7 @@ class SemanticError final : public std::runtime_error {
 enum class SemanticKind {
   type_declaration,
   function_declaration,
+  extern_function_declaration,
   let_expression,
   do_expression,
   match_expression,

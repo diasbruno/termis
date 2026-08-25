@@ -1,0 +1,4 @@
+(extern fn c-abs ((value i64)) i64 "llabs")
+
+(fn main () i64
+  (c-abs -42))

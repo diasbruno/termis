@@ -103,6 +103,74 @@ The initial compiler executable is expected to be called `termisc`.
 $ termisc hello.termis -o hello.ll
 ```
 
+The core language has no mandatory standard library or runtime. Module paths are
+loaded explicitly with `-I`/`--module-path`; each path contributes every
+`.termis` file it contains.
+
+```lisp
+(module my/program
+  (import std/data)
+
+  (fn main () i64
+    42))
+```
+
+```console
+$ termisc -I std program.termis -o program
+```
+
+Modules wrap their declarations. Imports record module dependencies, but modules
+are not bound to file boundaries and may be extended later; current conflict
+detection is based on duplicate declarations.
+
+The initial standard-library modules are intentionally small:
+
+```text
+std.data
+std.memory
+std.io
+std.os
+std.process
+std.time
+```
+
+`std.data` defines `Data` as the conventional C-compatible byte/raw-memory
+pointer:
+
+```lisp
+(type Data (& u8))
+```
+
+`Data` covers APIs that operate on C `void *` or `char *` style storage. It does
+not imply length, ownership, encoding, or NUL termination.
+
+`std.memory` uses `Data` and target-sized integers for allocation sizes:
+
+```lisp
+(extern fn allocate ((size usize)) Data "malloc")
+(extern fn free ((data Data)) unit "free")
+```
+
+`Data` represents storage whose higher-level element type may be unknown. It is
+not a dynamic `any` type and should be cast to a typed pointer before
+dereferencing once casts and dereference operations are available.
+
+Termis can declare C functions with `extern fn`. The optional final string names
+the linked C symbol; without it, the Termis function name is used as the C symbol.
+
+```lisp
+(extern fn c-abs ((value i64)) i64 "llabs")
+
+(fn main () i64
+  (c-abs -42))
+```
+
+```console
+$ make examples
+```
+
+The `examples` target builds every example program into `build/examples/`.
+
 ## Status
 
 Termis is currently in the early design and bootstrap implementation stage.

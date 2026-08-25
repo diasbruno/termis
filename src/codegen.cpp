@@ -2,6 +2,7 @@
 
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
@@ -28,8 +29,10 @@ struct Value {
 
 struct FunctionSignature {
   std::string name;
+  std::string link_name;
   std::vector<std::pair<std::string, llvm::Type*>> parameters;
   llvm::Type* return_type = nullptr;
+  bool external = false;
 };
 
 struct ArmResult {
@@ -47,6 +50,10 @@ const List* as_list(const Form& form) {
 
 const IntegerLiteral* as_integer(const Form& form) {
   return std::get_if<IntegerLiteral>(&form.kind);
+}
+
+const StringLiteral* as_string(const Form& form) {
+  return std::get_if<StringLiteral>(&form.kind);
 }
 
 bool is_unit(const Form& form) {
@@ -84,6 +91,7 @@ std::string symbol_name(const Form& form, std::string message) {
 }
 
 llvm::Type* primitive_llvm_type(llvm::LLVMContext& context,
+                                const llvm::Module& module,
                                 PrimitiveType primitive,
                                 SourceLocation location) {
   switch (primitive) {
@@ -101,6 +109,9 @@ llvm::Type* primitive_llvm_type(llvm::LLVMContext& context,
     case PrimitiveType::i64:
     case PrimitiveType::u64:
       return llvm::Type::getInt64Ty(context);
+    case PrimitiveType::isize:
+    case PrimitiveType::usize:
+      return module.getDataLayout().getIntPtrType(context);
     case PrimitiveType::unit:
     case PrimitiveType::void_:
       return llvm::Type::getVoidTy(context);
@@ -111,12 +122,13 @@ llvm::Type* primitive_llvm_type(llvm::LLVMContext& context,
 }
 
 llvm::Type* llvm_type_for_type(llvm::LLVMContext& context,
+                               const llvm::Module& module,
                                const Type& type,
                                const TypeEnvironment& types,
                                SourceLocation location,
                                std::unordered_set<std::string>& resolving) {
   if (type.kind == TypeKind::primitive) {
-    return primitive_llvm_type(context, type.primitive, location);
+    return primitive_llvm_type(context, module, type.primitive, location);
   }
   if (type.kind == TypeKind::name) {
     const auto* declaration = types.find(type.name);
@@ -129,26 +141,31 @@ llvm::Type* llvm_type_for_type(llvm::LLVMContext& context,
     if (!resolving.insert(type.name).second) {
       fail(location, "recursive type alias cannot be lowered to LLVM primitive type");
     }
-    auto* llvm_type = llvm_type_for_type(context, *declaration->body, types, location, resolving);
+    auto* llvm_type = llvm_type_for_type(context, module, *declaration->body, types, location, resolving);
     resolving.erase(type.name);
     return llvm_type;
   }
   if (type.kind == TypeKind::application) {
     const auto instantiated = instantiate_type_application(type, types);
-    return llvm_type_for_type(context, *instantiated, types, location, resolving);
+    return llvm_type_for_type(context, module, *instantiated, types, location, resolving);
+  }
+  if (type.kind == TypeKind::pointer) {
+    return llvm::PointerType::get(context, 0);
   }
   fail(location, "LLVM emission currently supports only primitive types in function signatures");
 }
 
 llvm::Type* llvm_type_for(llvm::LLVMContext& context,
+                          const llvm::Module& module,
                           const Form& form,
                           const TypeEnvironment& types) {
   const auto type = parse_type(form);
   std::unordered_set<std::string> resolving;
-  return llvm_type_for_type(context, *type, types, form.location, resolving);
+  return llvm_type_for_type(context, module, *type, types, form.location, resolving);
 }
 
 FunctionSignature parse_signature(llvm::LLVMContext& context,
+                                  const llvm::Module& module,
                                   const Form& form,
                                   const TypeEnvironment& types) {
   const auto* list = as_list(form);
@@ -161,7 +178,8 @@ FunctionSignature parse_signature(llvm::LLVMContext& context,
 
   FunctionSignature signature;
   signature.name = symbol_name(element(*list, 1), "function name must be a symbol");
-  signature.return_type = llvm_type_for(context, element(*list, 3), types);
+  signature.link_name = signature.name;
+  signature.return_type = llvm_type_for(context, module, element(*list, 3), types);
 
   const auto* parameters = as_list(element(*list, 2));
   if (parameters == nullptr) {
@@ -174,11 +192,78 @@ FunctionSignature parse_signature(llvm::LLVMContext& context,
     }
     signature.parameters.push_back({
         symbol_name(element(*parameter, 0), "function parameter name must be a symbol"),
-        llvm_type_for(context, element(*parameter, 1), types),
+        llvm_type_for(context, module, element(*parameter, 1), types),
     });
   }
 
   return signature;
+}
+
+FunctionSignature parse_extern_signature(llvm::LLVMContext& context,
+                                         const llvm::Module& module,
+                                         const Form& form,
+                                         const TypeEnvironment& types) {
+  const auto* list = as_list(form);
+  if (list == nullptr || (list->elements.size() != 5 && list->elements.size() != 6)) {
+    fail(form.location, "extern function declaration expects 5 or 6 forms");
+  }
+  if (symbol_name(element(*list, 0), "extern declaration head must be a symbol") != "extern") {
+    fail(element(*list, 0).location, "expected extern declaration");
+  }
+  if (symbol_name(element(*list, 1), "extern declaration kind must be a symbol") != "fn") {
+    fail(element(*list, 1).location, "extern declaration currently supports only fn");
+  }
+
+  FunctionSignature signature;
+  signature.name = symbol_name(element(*list, 2), "extern function name must be a symbol");
+  signature.link_name = signature.name;
+  signature.return_type = llvm_type_for(context, module, element(*list, 4), types);
+  signature.external = true;
+
+  const auto* parameters = as_list(element(*list, 3));
+  if (parameters == nullptr) {
+    fail(element(*list, 3).location, "extern function parameters must be a list");
+  }
+  for (const auto& parameter_form : parameters->elements) {
+    const auto* parameter = as_list(*parameter_form);
+    if (parameter == nullptr || parameter->elements.size() != 2) {
+      fail(parameter_form->location, "extern function parameter requires name and type");
+    }
+    signature.parameters.push_back({
+        symbol_name(element(*parameter, 0), "extern function parameter name must be a symbol"),
+        llvm_type_for(context, module, element(*parameter, 1), types),
+    });
+  }
+
+  if (list->elements.size() == 6) {
+    const auto* link_name = as_string(element(*list, 5));
+    if (link_name == nullptr) {
+      fail(element(*list, 5).location, "extern function link name must be a string");
+    }
+    signature.link_name = link_name->value;
+  }
+
+  return signature;
+}
+
+llvm::Function* declare_function(llvm::Module& module, const FunctionSignature& signature) {
+  if (auto* function = module.getFunction(signature.link_name)) {
+    return function;
+  }
+
+  std::vector<llvm::Type*> parameter_types;
+  for (const auto& parameter : signature.parameters) {
+    parameter_types.push_back(parameter.second);
+  }
+  auto* function_type = llvm::FunctionType::get(signature.return_type, parameter_types, false);
+  auto* function = llvm::Function::Create(function_type,
+                                          llvm::Function::ExternalLinkage,
+                                          signature.link_name,
+                                          module);
+  if (!signature.external && signature.link_name != signature.name) {
+    function->setName(signature.name);
+  }
+  return function;
 }
 
 class FunctionEmitter {
@@ -196,16 +281,7 @@ class FunctionEmitter {
 
   void emit(const Form& declaration) {
     const auto* list = as_list(declaration);
-    std::vector<llvm::Type*> parameter_types;
-    for (const auto& parameter : signature_.parameters) {
-      parameter_types.push_back(parameter.second);
-    }
-
-    auto* function_type = llvm::FunctionType::get(signature_.return_type, parameter_types, false);
-    auto* function = llvm::Function::Create(function_type,
-                                            llvm::Function::ExternalLinkage,
-                                            signature_.name,
-                                            module_);
+    auto* function = declare_function(module_, signature_);
     auto parameter = function->arg_begin();
     for (const auto& signature_parameter : signature_.parameters) {
       parameter->setName(signature_parameter.first);
@@ -517,6 +593,9 @@ class FunctionEmitter {
 
     auto* function = module_.getFunction(name);
     if (function == nullptr) {
+      function = module_.getFunction(signature.link_name);
+    }
+    if (function == nullptr) {
       fail(form.location, "unknown function");
     }
     auto* call = builder_.CreateCall(function, arguments);
@@ -554,7 +633,13 @@ std::string emit_llvm_ir(const Program& program) {
   std::unordered_map<std::string, FunctionSignature> functions;
   for (const auto& node : program.forms) {
     if (node->kind == SemanticKind::function_declaration) {
-      auto signature = parse_signature(context, *node->form, program.types);
+      auto signature = parse_signature(context, module, *node->form, program.types);
+      if (functions.contains(signature.name)) {
+        fail(node->form->location, "function redefines existing function");
+      }
+      functions.emplace(signature.name, std::move(signature));
+    } else if (node->kind == SemanticKind::extern_function_declaration) {
+      auto signature = parse_extern_signature(context, module, *node->form, program.types);
       if (functions.contains(signature.name)) {
         fail(node->form->location, "function redefines existing function");
       }
@@ -562,13 +647,19 @@ std::string emit_llvm_ir(const Program& program) {
     }
   }
 
+  for (const auto& [_, signature] : functions) {
+    declare_function(module, signature);
+  }
+
   for (const auto& node : program.forms) {
     if (node->kind == SemanticKind::function_declaration) {
-      const auto signature = parse_signature(context, *node->form, program.types);
+      const auto signature = parse_signature(context, module, *node->form, program.types);
       FunctionEmitter emitter(context, module, builder, functions, functions.at(signature.name));
       emitter.emit(*node->form);
+    } else if (node->kind == SemanticKind::extern_function_declaration) {
+      continue;
     } else if (node->kind != SemanticKind::type_declaration) {
-      fail(node->form->location, "LLVM emission currently supports only type and function declarations");
+      fail(node->form->location, "LLVM emission currently supports only type, extern, and function declarations");
     }
   }
 

@@ -24,6 +24,7 @@ void recognizes_core_forms() {
   auto program = analyze(R"(
     (type UserId u64)
     (fn noop () unit .)
+    (extern fn c-abs ((value i64)) i64 "llabs")
     (let ((x 1)) x)
     (do .)
     (match value (_ .))
@@ -36,30 +37,32 @@ void recognizes_core_forms() {
     42
   )");
 
-  require(program.forms.size() == 12, "expected twelve semantic forms");
+  require(program.forms.size() == 13, "expected thirteen semantic forms");
   require(program.forms[0]->kind == termis::SemanticKind::type_declaration,
           "expected type declaration");
   require(program.forms[1]->kind == termis::SemanticKind::function_declaration,
           "expected function declaration");
-  require(program.forms[2]->kind == termis::SemanticKind::let_expression,
+  require(program.forms[2]->kind == termis::SemanticKind::extern_function_declaration,
+          "expected extern function declaration");
+  require(program.forms[3]->kind == termis::SemanticKind::let_expression,
           "expected let expression");
-  require(program.forms[3]->kind == termis::SemanticKind::do_expression,
+  require(program.forms[4]->kind == termis::SemanticKind::do_expression,
           "expected do expression");
-  require(program.forms[4]->kind == termis::SemanticKind::match_expression,
+  require(program.forms[5]->kind == termis::SemanticKind::match_expression,
           "expected match expression");
-  require(program.forms[5]->kind == termis::SemanticKind::const_declaration,
+  require(program.forms[6]->kind == termis::SemanticKind::const_declaration,
           "expected const declaration");
-  require(program.forms[6]->kind == termis::SemanticKind::application,
-          "expected application");
   require(program.forms[7]->kind == termis::SemanticKind::application,
+          "expected application");
+  require(program.forms[8]->kind == termis::SemanticKind::application,
           "expected call to be an application");
-  require(program.forms[8]->kind == termis::SemanticKind::list_expression,
-          "expected empty list expression");
   require(program.forms[9]->kind == termis::SemanticKind::list_expression,
-          "expected list-headed list expression");
+          "expected empty list expression");
   require(program.forms[10]->kind == termis::SemanticKind::list_expression,
+          "expected list-headed list expression");
+  require(program.forms[11]->kind == termis::SemanticKind::list_expression,
           "expected non-symbol-headed list expression");
-  require(program.forms[11]->kind == termis::SemanticKind::atom,
+  require(program.forms[12]->kind == termis::SemanticKind::atom,
           "expected atom");
 }
 

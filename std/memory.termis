@@ -1,0 +1,11 @@
+(module std/memory
+  (import std/data)
+
+  (extern fn allocate ((size usize)) Data "malloc")
+  (extern fn reallocate ((data Data) (size usize)) Data "realloc")
+  (extern fn free ((data Data)) unit "free")
+
+  (extern fn copy ((destination Data) (source Data) (size usize)) Data "memcpy")
+  (extern fn move ((destination Data) (source Data) (size usize)) Data "memmove")
+  (extern fn set ((data Data) (value u8) (size usize)) Data "memset")
+  (extern fn compare ((left Data) (right Data) (size usize)) i32 "memcmp"))

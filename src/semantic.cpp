@@ -47,6 +47,12 @@ void require_list(const Form& form, std::string message) {
   }
 }
 
+void require_optional_string(const Form& form, std::string message) {
+  if (!std::holds_alternative<StringLiteral>(form.kind)) {
+    throw SemanticError(Diagnostic{form.location, std::move(message)});
+  }
+}
+
 SemanticKind classify(const Form& form) {
   const auto* list = as_list(form);
   if (list == nullptr) {
@@ -84,6 +90,24 @@ SemanticKind classify(const Form& form) {
     require_symbol(list_element(form, 1), "function name must be a symbol");
     require_list(list_element(form, 2), "function parameters must be a list");
     return SemanticKind::function_declaration;
+  }
+
+  if (head->name == "extern") {
+    require_count_at_least(form, 5, "extern function declaration requires fn, name, parameters, and return type");
+    if (element_count(form) != 5 && element_count(form) != 6) {
+      throw SemanticError(Diagnostic{form.location, "extern function declaration expects 5 or 6 forms"});
+    }
+    const auto* extern_kind = as_symbol(list_element(form, 1));
+    if (extern_kind == nullptr || extern_kind->name != "fn") {
+      throw SemanticError(Diagnostic{list_element(form, 1).location,
+                                     "extern declaration currently supports only fn"});
+    }
+    require_symbol(list_element(form, 2), "extern function name must be a symbol");
+    require_list(list_element(form, 3), "extern function parameters must be a list");
+    if (element_count(form) == 6) {
+      require_optional_string(list_element(form, 5), "extern function link name must be a string");
+    }
+    return SemanticKind::extern_function_declaration;
   }
 
   if (head->name == "let") {

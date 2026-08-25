@@ -33,15 +33,17 @@ PrimitiveType primitive_from_name(std::string_view name, bool& found) {
     PrimitiveType type;
   };
 
-  static constexpr std::array<Entry, 13> entries = {{
+  static constexpr std::array<Entry, 15> entries = {{
       {"i8", PrimitiveType::i8},
       {"i16", PrimitiveType::i16},
       {"i32", PrimitiveType::i32},
       {"i64", PrimitiveType::i64},
+      {"isize", PrimitiveType::isize},
       {"u8", PrimitiveType::u8},
       {"u16", PrimitiveType::u16},
       {"u32", PrimitiveType::u32},
       {"u64", PrimitiveType::u64},
+      {"usize", PrimitiveType::usize},
       {"f32", PrimitiveType::f32},
       {"f64", PrimitiveType::f64},
       {"bool", PrimitiveType::bool_},
@@ -426,6 +428,8 @@ std::string primitive_name(PrimitiveType primitive) {
       return "i32";
     case PrimitiveType::i64:
       return "i64";
+    case PrimitiveType::isize:
+      return "isize";
     case PrimitiveType::u8:
       return "u8";
     case PrimitiveType::u16:
@@ -434,6 +438,8 @@ std::string primitive_name(PrimitiveType primitive) {
       return "u32";
     case PrimitiveType::u64:
       return "u64";
+    case PrimitiveType::usize:
+      return "usize";
     case PrimitiveType::f32:
       return "f32";
     case PrimitiveType::f64:

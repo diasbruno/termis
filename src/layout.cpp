@@ -41,6 +41,8 @@ Layout primitive_layout(PrimitiveType primitive, SourceLocation location) {
       return Layout{4, 4, {}};
     case PrimitiveType::i64:
     case PrimitiveType::u64:
+    case PrimitiveType::isize:
+    case PrimitiveType::usize:
     case PrimitiveType::f64:
       return Layout{8, 8, {}};
     case PrimitiveType::unit:

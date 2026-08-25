@@ -1,0 +1,14 @@
+(module std/io
+  (import std/data)
+
+  (type IOError
+    (sum
+      NotFound
+      PermissionDenied
+      InvalidData
+      EndOfFile
+      Unknown))
+
+  (type File (& void))
+
+  (extern fn write ((data Data)) i32 "puts"))

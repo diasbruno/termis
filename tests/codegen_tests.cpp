@@ -90,6 +90,16 @@ void emits_function_calls() {
   contains(ir, "call i64 @add(i64 10, i64 32)");
 }
 
+void emits_extern_function_calls() {
+  const auto ir = emit(R"(
+    (extern fn c-abs ((value i64)) i64 "llabs")
+    (fn main () i64 (c-abs -42))
+  )");
+
+  contains(ir, "declare i64 @llabs(i64)");
+  contains(ir, "call i64 @llabs(i64 -42)");
+}
+
 void emits_primitive_type_aliases() {
   const auto ir = emit(R"(
     (type UserId u64)
@@ -143,6 +153,7 @@ int main() {
   emits_match_expression();
   emits_match_binding();
   emits_function_calls();
+  emits_extern_function_calls();
   emits_primitive_type_aliases();
   emits_primitive_generic_instantiations();
   emits_alias_chains_through_generic_instantiations();

@@ -33,6 +33,8 @@ void computes_primitive_layouts() {
   require(layout_of("i16").alignment == 2, "expected i16 alignment");
   require(layout_of("i32").size == 4, "expected i32 size");
   require(layout_of("i64").alignment == 8, "expected i64 alignment");
+  require(layout_of("isize").size == 8, "expected isize size");
+  require(layout_of("usize").size == 8, "expected usize size");
   require(layout_of("bool").size == 1, "expected bool size");
   require(layout_of("unit").size == 0, "expected unit size");
 }

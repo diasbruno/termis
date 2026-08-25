@@ -1,0 +1,7 @@
+(module examples/stdlib
+  (import std/data)
+
+  (type LocalData Data)
+
+  (fn main () i64
+    42))
