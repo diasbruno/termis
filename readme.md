@@ -41,6 +41,127 @@ It aims to combine a small and expressive syntax with predictable low-level memo
   (unwrap-or (Some 42) 0))
 ```
 
+## Forms
+
+Termis source is a sequence of forms. Whitespace separates forms and has no
+meaning otherwise. Comments are not part of the source language yet.
+
+The reader recognizes exactly these form kinds:
+
+```text
+form    ::= atom | list
+atom    ::= symbol | integer | floating | string | "."
+list    ::= "(" form* ")"
+```
+
+Symbols are any non-empty sequence of non-whitespace characters other than
+`(`, `)`, `"`, and `.`. A `.` by itself is the unit literal; dots inside symbols
+are reserved and rejected.
+
+Integers are signed 64-bit decimal literals:
+
+```lisp
+42
+-7
++9
+```
+
+Floating-point literals are decimal literals with digits on both sides of the
+decimal point:
+
+```lisp
+1.5
+-0.25
+```
+
+`.5` and `1.` are invalid. Floating-point literals are read as `f64` values, but
+LLVM lowering does not yet emit floating-point expressions.
+
+Strings are double-quoted and support `\n`, `\t`, `\"`, and `\\` escapes:
+
+```lisp
+"hello\n"
+```
+
+The semantic layer classifies lists by their first element when that element is
+a symbol. These are the language forms currently recognized:
+
+```text
+(type name body)
+(type name (parameter*) body)
+
+(fn name ((parameter-name parameter-type)*) result-type body+)
+(extern fn name ((parameter-name parameter-type)*) result-type)
+(extern fn name ((parameter-name parameter-type)*) result-type "link-name")
+
+(const name value)
+
+(let ((name value)*) body+)
+(do body+)
+(match value (pattern expression)+)
+
+(module module/name form*)
+(import module/name)
+
+(operator argument*)
+()
+(list form*)
+```
+
+`type`, `fn`, `extern`, `const`, `let`, `do`, and `match` are classified as
+special forms. Any other list headed by a symbol is an application. Empty lists,
+`(list ...)`, and lists whose first element is not a symbol are list expressions;
+they are parsed and classified but not yet lowered to LLVM.
+
+The compiler frontend handles `module` and `import` before semantic analysis.
+`(module name ...)` unwraps and contributes its body forms. `(import name)` is
+accepted as a module dependency marker and then skipped; module paths supplied
+with `-I`/`--module-path` decide which files are loaded.
+
+Code generation currently lowers top-level `type`, `fn`, and `extern fn`
+declarations. Top-level expressions and `const` declarations are recognized by
+semantic analysis but are not yet emitted. Function bodies currently lower:
+
+```text
+integer literals
+true
+false
+.
+local variable references
+(let ((name value)*) body+)
+(do body+)
+(match value (pattern expression)+)
+(+ left right)
+(- left right)
+(* left right)
+(/ left right)
+(= left right)
+(!= left right)
+(< left right)
+(<= left right)
+(> left right)
+(>= left right)
+(function-name argument*)
+```
+
+Arithmetic currently supports `i32` and `i64` operands. Comparisons require both
+operands to have the same lowered type and return `bool`.
+
+Match arms have the form `(pattern expression)`. Lowered patterns are:
+
+```text
+_       catch-all
+name    bind the scrutinee to name
+true
+false
+integer
+.       unit
+```
+
+A `match` must be exhaustive. Boolean matches are exhaustive when they contain
+both `true` and `false` arms; otherwise the final arm must be a catch-all or
+binding pattern.
+
 ## Types
 
 Termis uses `type` as the common type declaration mechanism.
@@ -66,6 +187,44 @@ Pointers use `&`:
 
 ```lisp
 (& Point)
+```
+
+Type expressions have these forms:
+
+```text
+i8 | i16 | i32 | i64 | isize
+u8 | u16 | u32 | u64 | usize
+f32 | f64
+bool
+unit
+void
+
+Name
+(Name argument*)
+(& element-type)
+(array element-type size)
+(slice element-type)
+(fn (argument-type*) result-type)
+(product (field-name field-type)*)
+(sum alternative*)
+(union (field-name field-type)*)
+```
+
+`Name` refers to a concrete type declaration or a type parameter. `(Name ...)`
+instantiates a generic type declaration. Array sizes are integer literals.
+
+Product and union fields are two-element lists:
+
+```lisp
+(field-name field-type)
+```
+
+Sum alternatives are either a bare constructor name or a constructor followed by
+payload types:
+
+```lisp
+None
+(Some T)
 ```
 
 The unit type is `unit`, and its sole value is `.`:
