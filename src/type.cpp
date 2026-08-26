@@ -354,11 +354,25 @@ TypePtr clone_type(const Type& type) {
 namespace {
 
 TypePtr substitute_type_impl(const Type& type, const std::unordered_map<std::string, const Type*>& substitutions) {
-  if (type.kind == TypeKind::name) {
-    const auto found = substitutions.find(type.name);
-    if (found != substitutions.end()) {
-      return clone_type(*found->second);
+  switch (type.kind) {
+    case TypeKind::name: {
+      const auto found = substitutions.find(type.name);
+      if (found != substitutions.end()) {
+        return clone_type(*found->second);
+      }
+      break;
     }
+
+    case TypeKind::primitive:
+    case TypeKind::pointer:
+    case TypeKind::array:
+    case TypeKind::slice:
+    case TypeKind::function:
+    case TypeKind::product:
+    case TypeKind::sum:
+    case TypeKind::union_:
+    case TypeKind::application:
+      break;
   }
 
   auto substituted = make_type(type.kind, type.location);
@@ -393,8 +407,20 @@ TypePtr substitute_type_impl(const Type& type, const std::unordered_map<std::str
 }  // namespace
 
 TypePtr instantiate_type_application(const Type& application, const TypeEnvironment& environment) {
-  if (application.kind != TypeKind::application) {
-    fail(application.location, "expected type application");
+  switch (application.kind) {
+    case TypeKind::application:
+      break;
+
+    case TypeKind::primitive:
+    case TypeKind::name:
+    case TypeKind::pointer:
+    case TypeKind::array:
+    case TypeKind::slice:
+    case TypeKind::function:
+    case TypeKind::product:
+    case TypeKind::sum:
+    case TypeKind::union_:
+      fail(application.location, "expected type application");
   }
 
   const auto* declaration = environment.find(application.name);
@@ -552,8 +578,20 @@ std::string type_to_string(const Type& type) {
 
 const MonomorphizedType& MonomorphizationRegistry::intern(const Type& application,
                                                          const TypeEnvironment& environment) {
-  if (application.kind != TypeKind::application) {
-    fail(application.location, "expected type application");
+  switch (application.kind) {
+    case TypeKind::application:
+      break;
+
+    case TypeKind::primitive:
+    case TypeKind::name:
+    case TypeKind::pointer:
+    case TypeKind::array:
+    case TypeKind::slice:
+    case TypeKind::function:
+    case TypeKind::product:
+    case TypeKind::sum:
+    case TypeKind::union_:
+      fail(application.location, "expected type application");
   }
 
   const auto key = type_to_string(application);

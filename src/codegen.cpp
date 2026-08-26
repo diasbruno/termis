@@ -127,32 +127,42 @@ llvm::Type* llvm_type_for_type(llvm::LLVMContext& context,
                                const TypeEnvironment& types,
                                SourceLocation location,
                                std::unordered_set<std::string>& resolving) {
-  if (type.kind == TypeKind::primitive) {
-    return primitive_llvm_type(context, module, type.primitive, location);
-  }
-  if (type.kind == TypeKind::name) {
-    const auto* declaration = types.find(type.name);
-    if (declaration == nullptr) {
-      fail(location, "unknown type name");
+  switch (type.kind) {
+    case TypeKind::primitive:
+      return primitive_llvm_type(context, module, type.primitive, location);
+
+    case TypeKind::name: {
+      const auto* declaration = types.find(type.name);
+      if (declaration == nullptr) {
+        fail(location, "unknown type name");
+      }
+      if (!declaration->parameters.empty()) {
+        fail(location, "generic type requires type arguments");
+      }
+      if (!resolving.insert(type.name).second) {
+        fail(location, "recursive type alias cannot be lowered to LLVM primitive type");
+      }
+      auto* llvm_type = llvm_type_for_type(context, module, *declaration->body, types, location, resolving);
+      resolving.erase(type.name);
+      return llvm_type;
     }
-    if (!declaration->parameters.empty()) {
-      fail(location, "generic type requires type arguments");
+
+    case TypeKind::application: {
+      const auto instantiated = instantiate_type_application(type, types);
+      return llvm_type_for_type(context, module, *instantiated, types, location, resolving);
     }
-    if (!resolving.insert(type.name).second) {
-      fail(location, "recursive type alias cannot be lowered to LLVM primitive type");
-    }
-    auto* llvm_type = llvm_type_for_type(context, module, *declaration->body, types, location, resolving);
-    resolving.erase(type.name);
-    return llvm_type;
+
+    case TypeKind::pointer:
+      return llvm::PointerType::get(context, 0);
+
+    case TypeKind::array:
+    case TypeKind::slice:
+    case TypeKind::function:
+    case TypeKind::product:
+    case TypeKind::sum:
+    case TypeKind::union_:
+      fail(location, "LLVM emission currently supports only primitive types in function signatures");
   }
-  if (type.kind == TypeKind::application) {
-    const auto instantiated = instantiate_type_application(type, types);
-    return llvm_type_for_type(context, module, *instantiated, types, location, resolving);
-  }
-  if (type.kind == TypeKind::pointer) {
-    return llvm::PointerType::get(context, 0);
-  }
-  fail(location, "LLVM emission currently supports only primitive types in function signatures");
 }
 
 llvm::Type* llvm_type_for(llvm::LLVMContext& context,
@@ -636,18 +646,34 @@ std::string emit_llvm_ir(const Program& program) {
 
   std::unordered_map<std::string, FunctionSignature> functions;
   for (const auto& node : program.forms) {
-    if (node->kind == SemanticKind::function_declaration) {
-      auto signature = parse_signature(context, module, *node->form, program.types);
-      if (functions.contains(signature.name)) {
-        fail(node->form->location, "function redefines existing function");
+    switch (node->kind) {
+      case SemanticKind::function_declaration: {
+        auto signature = parse_signature(context, module, *node->form, program.types);
+        if (functions.contains(signature.name)) {
+          fail(node->form->location, "function redefines existing function");
+        }
+        functions.emplace(signature.name, std::move(signature));
+        break;
       }
-      functions.emplace(signature.name, std::move(signature));
-    } else if (node->kind == SemanticKind::extern_function_declaration) {
-      auto signature = parse_extern_signature(context, module, *node->form, program.types);
-      if (functions.contains(signature.name)) {
-        fail(node->form->location, "function redefines existing function");
+
+      case SemanticKind::extern_function_declaration: {
+        auto signature = parse_extern_signature(context, module, *node->form, program.types);
+        if (functions.contains(signature.name)) {
+          fail(node->form->location, "function redefines existing function");
+        }
+        functions.emplace(signature.name, std::move(signature));
+        break;
       }
-      functions.emplace(signature.name, std::move(signature));
+
+      case SemanticKind::type_declaration:
+      case SemanticKind::let_expression:
+      case SemanticKind::do_expression:
+      case SemanticKind::match_expression:
+      case SemanticKind::const_declaration:
+      case SemanticKind::application:
+      case SemanticKind::list_expression:
+      case SemanticKind::atom:
+        break;
     }
   }
 
@@ -656,14 +682,26 @@ std::string emit_llvm_ir(const Program& program) {
   }
 
   for (const auto& node : program.forms) {
-    if (node->kind == SemanticKind::function_declaration) {
-      const auto signature = parse_signature(context, module, *node->form, program.types);
-      FunctionEmitter emitter(context, module, builder, functions, functions.at(signature.name));
-      emitter.emit(*node->form);
-    } else if (node->kind == SemanticKind::extern_function_declaration) {
-      continue;
-    } else if (node->kind != SemanticKind::type_declaration) {
-      fail(node->form->location, "LLVM emission currently supports only type, extern, and function declarations");
+    switch (node->kind) {
+      case SemanticKind::function_declaration: {
+        const auto signature = parse_signature(context, module, *node->form, program.types);
+        FunctionEmitter emitter(context, module, builder, functions, functions.at(signature.name));
+        emitter.emit(*node->form);
+        break;
+      }
+
+      case SemanticKind::extern_function_declaration:
+      case SemanticKind::type_declaration:
+        break;
+
+      case SemanticKind::let_expression:
+      case SemanticKind::do_expression:
+      case SemanticKind::match_expression:
+      case SemanticKind::const_declaration:
+      case SemanticKind::application:
+      case SemanticKind::list_expression:
+      case SemanticKind::atom:
+        fail(node->form->location, "LLVM emission currently supports only type, extern, and function declarations");
     }
   }
 

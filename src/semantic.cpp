@@ -153,8 +153,21 @@ Program analyze_forms(const std::vector<FormPtr>& forms) {
   program.forms.reserve(forms.size());
   for (const auto& form : forms) {
     auto node = analyze_form(*form);
-    if (node->kind == SemanticKind::type_declaration) {
-      program.types.declare(parse_type_declaration(*form));
+    switch (node->kind) {
+      case SemanticKind::type_declaration:
+        program.types.declare(parse_type_declaration(*form));
+        break;
+
+      case SemanticKind::function_declaration:
+      case SemanticKind::extern_function_declaration:
+      case SemanticKind::let_expression:
+      case SemanticKind::do_expression:
+      case SemanticKind::match_expression:
+      case SemanticKind::const_declaration:
+      case SemanticKind::application:
+      case SemanticKind::list_expression:
+      case SemanticKind::atom:
+        break;
     }
     program.forms.push_back(std::move(node));
   }
