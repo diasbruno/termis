@@ -42,11 +42,11 @@ compile_flags.txt: FORCE
 		printf '%s\n' \
 			'-xc++' \
 			'-std=c++20' \
-			'-I' \
-			'$(CURDIR)/src' \
 			'-Wall' \
 			'-Wextra' \
 			'-Wpedantic'; \
+			'-I' \
+			'$(CURDIR)/src' \
 		clang++ -E -x c++ - -v < /dev/null 2>&1 \
 			| awk '/#include <...> search starts here:/{include=1; next} /End of search list./{include=0} include { sub(/^ /, ""); if (sub(/ \(framework directory\)$$/, "")) { print "-iframework"; print } else { print "-isystem"; print } }'; \
 	} > compile_flags.txt
