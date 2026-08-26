@@ -1,0 +1,50 @@
+(module examples/stdin-random-sum
+  (import std/data)
+
+  (extern fn allocate-zeroed ((count usize) (size usize)) Data "calloc")
+  (extern fn read-stdin ((fd i64) (buffer Data) (count usize)) i64 "read")
+  (extern fn parse-i64 ((data Data)) i64 "atoll")
+  (extern fn current-time ((timer Data)) i64 "time")
+  (extern fn process-id () i64 "getpid")
+  (extern fn seed-random ((seed i64)) unit "srandom")
+  (extern fn random-i64 () i64 "random")
+  (extern fn put-char ((char i64)) i32 "putchar")
+
+  (fn digit ((value i64)) i64
+    (- value (* (/ value 10) 10)))
+
+  (fn print-positive-i64 ((value i64)) unit
+    (match (< value 10)
+      (true
+        (do
+          (put-char (+ value 48))
+          .))
+      (false
+        (do
+          (print-positive-i64 (/ value 10))
+          (put-char (+ (digit value) 48))
+          .))))
+
+  (fn print-i64 ((value i64)) unit
+    (match (< value 0)
+      (true
+        (do
+          (put-char 45)
+          (print-positive-i64 (- 0 value))
+          .))
+      (false
+        (print-positive-i64 value))))
+
+  (fn main () i64
+    (let ((buffer (allocate-zeroed 64 1))
+          (timer (allocate-zeroed 1 8))
+          (read-result (read-stdin 0 buffer 63))
+          (input (parse-i64 buffer))
+          (seed-result (seed-random (+ (current-time timer) (process-id))))
+          (random-number (random-i64))
+          (sum (+ input random-number)))
+      (print-i64 sum)
+      (put-char 10)
+      (free timer)
+      (free buffer)
+      sum)))

@@ -90,6 +90,17 @@ void emits_function_calls() {
   contains(ir, "call i64 @add(i64 10, i64 32)");
 }
 
+void emits_string_literal_calls() {
+  const auto ir = emit(R"(
+    (type Data (& u8))
+    (extern fn write ((data Data)) i32 "puts")
+    (fn main () i32 (write "hello"))
+  )");
+
+  contains(ir, "private unnamed_addr constant [6 x i8] c\"hello\\00\"");
+  contains(ir, "call i32 @puts(ptr");
+}
+
 void emits_extern_function_calls() {
   const auto ir = emit(R"(
     (extern fn c-abs ((value i64)) i64 "llabs")
@@ -153,6 +164,7 @@ int main() {
   emits_match_expression();
   emits_match_binding();
   emits_function_calls();
+  emits_string_literal_calls();
   emits_extern_function_calls();
   emits_primitive_type_aliases();
   emits_primitive_generic_instantiations();

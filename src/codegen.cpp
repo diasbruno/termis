@@ -311,6 +311,10 @@ class FunctionEmitter {
       auto* type = llvm::Type::getInt64Ty(context_);
       return Value{type, llvm::ConstantInt::get(type, integer->value, true)};
     }
+    if (const auto* string = as_string(form)) {
+      auto* value = builder_.CreateGlobalString(string->value);
+      return Value{value->getType(), value};
+    }
     if (is_unit(form)) {
       return Value{llvm::Type::getVoidTy(context_), nullptr};
     }
