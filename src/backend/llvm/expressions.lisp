@@ -10,19 +10,19 @@
                                  '())))))
 
 (defun ascii-octets (text)
-  "Return TEXT's ASCII bytes, defending the backend boundary as well."
+  "Return TEXT's C-string-safe ASCII bytes, defending the backend boundary."
   (unless (every (lambda (character) (<= (char-code character) #x7f)) text)
     (backend-fail "string literal is not ASCII: ~S" text))
+  (when (position #\Null text)
+    (backend-fail "string literal contains a NUL byte: ~S" text))
   (map 'list #'char-code text))
 
 (defun emit-string-literal (backend expression)
-  "Lower an ASCII STRING literal to a byte slice backed by a private global."
+  "Lower an ASCII STRING literal to a NUL-terminated private byte global."
   (let* ((context (llvm-backend-context backend))
          (byte-type (llvm:int-type 8 :context context))
          (octets (ascii-octets (verona:string-literal-value expression)))
-         ;; The NUL is intentionally outside the slice length.  It makes the
-         ;; static storage useful to future explicit C-string interop without
-         ;; weakening Verona strings' embedded-NUL semantics.
+         ;; The terminator is part of the value's C-compatible representation.
          (storage (append octets (list 0)))
          (storage-type (llvm:array-type byte-type (length storage)))
          (ordinal (incf (llvm-backend-string-literal-counter backend)))
@@ -31,18 +31,14 @@
          ;; LLVM 23 pointers are opaque: a global array's address is directly
          ;; usable as the pointer to its first byte.  This also avoids the
          ;; removed legacy LLVMConstInBoundsGEP API.
-         (pointer global)
-         (length-value
-           (llvm:const-int (llvm:int-type (llvm-backend-pointer-width backend)
-                                          :context context)
-                           (length octets))))
+         (pointer global))
     (setf (llvm:initializer global)
           (llvm:const-array byte-type
                             (mapcar (lambda (octet) (llvm:const-int byte-type octet))
                                     storage))
           (llvm:global-constant-p global) t
           (llvm:linkage global) :private)
-    (llvm:const-struct (list pointer length-value) nil :context context)))
+    pointer))
 
 (defun emit-checked-array-element-address (backend array-type base-address index-expression)
   "Branch to llvm.trap when INDEX is outside ARRAY-TYPE, then form its GEP."

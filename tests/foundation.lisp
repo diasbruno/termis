@@ -230,7 +230,7 @@
 (test resolves-character-and-string-literals
   (let* ((unit (compile-string
                 (make-compiler)
-                "(function letter () char #\\a) (function greeting () string \"hello\")"))
+                "(function letter () char #\\a) (function greeting () (pointer u8) \"hello\")"))
          (program (compilation-unit-semantic-program unit))
          (letter (semantic-program-declaration program (first (unit-declarations unit))))
          (greeting (semantic-program-declaration program (second (unit-declarations unit))))
@@ -1337,7 +1337,7 @@
   (let* ((unit (compile-string
                 (make-compiler)
                 "(protocol display (a)
-                   (display ((value a)) string))
+                   (display ((value a)) (pointer u8)))
                  (function show
                    (for (a) ((display a)))
                    ((value a))

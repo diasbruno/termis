@@ -24,7 +24,6 @@
 (defclass unit-value () ())
 (defclass boolean-type (verona-type) ())
 (defclass char-type (verona-type) ())
-(defclass string-type (verona-type) ())
 (defclass integer-type (verona-type)
   ((signed :initarg :signed :reader integer-type-signed)
    (width :initarg :width :reader integer-type-width)))
@@ -100,7 +99,6 @@
    (pointer-width :initarg :pointer-width :reader type-context-pointer-width)
    (boolean-type :reader type-context-boolean-type)
    (char-type :reader type-context-char-type)
-   (string-type :reader type-context-string-type)
    ;; C's `int` is the platform process-exit representation.  It is distinct
    ;; from pointer-sized ISIZE and remains a signed 32-bit integer on the
    ;; targets Verona currently supports.
@@ -125,8 +123,7 @@
 	  (slot-value context 'unit-value) (make-instance 'unit-value)
 	  (slot-value context 'pointer-width) pointer-width
 	  (slot-value context 'boolean-type) (make-instance 'boolean-type)
-	  (slot-value context 'char-type) (make-instance 'char-type)
-	  (slot-value context 'string-type) (make-instance 'string-type))
+	  (slot-value context 'char-type) (make-instance 'char-type))
     (dolist (specification '((t 8) (t 16) (t 32) (t 64)
 			     (nil 8) (nil 16) (nil 32) (nil 64)))
       (destructuring-bind (signed width) specification
@@ -663,7 +660,6 @@ than recovered later through ad-hoc string comparisons."
 						 :type type))))
       (bind-type "bool" (type-context-boolean-type type-context))
 	  (bind-type "char" (type-context-char-type type-context))
-      (bind-type "string" (type-context-string-type type-context))
 	  (bind-type "void" (type-context-void-type type-context))
       (dolist (specification '(("i8" t 8) ("i16" t 16)
 			       ("i32" t 32) ("i64" t 64)
@@ -1859,7 +1855,6 @@ type checker."
 	((typep type 'void-type) "void")
 	((typep type 'boolean-type) "bool")
 	((typep type 'char-type) "char")
-	((typep type 'string-type) "string")
 	((typep type 'integer-type)
 	 (format nil "~:[u~;i~]~D" (integer-type-signed type)
 		 (integer-type-width type)))
@@ -2071,7 +2066,7 @@ recursive call can refer to the same concrete LLVM function."
     program))
 
 (defun compatible-p (actual expected)
-  "Current non-literal compatibility rule: types must be identical."
+  "Whether ACTUAL can be used where EXPECTED is required."
   (same-type-p actual expected))
 
 (defun expression-special-form-name (syntax)
@@ -2877,8 +2872,12 @@ therefore visible, while the binding being built cannot see itself."
 	   (unless (every (lambda (character) (<= (char-code character) #x7f)) datum)
 	     (error 'invalid-expression-error :syntax syntax
 		    :message "string literals are ASCII-only; Unicode strings will use #ustring"))
+	   (when (position #\Null datum)
+	     (error 'invalid-expression-error :syntax syntax
+		    :message "string literals cannot contain NUL bytes"))
 	   (make-instance 'string-literal :syntax syntax :value datum
-					  :type (type-context-string-type context)))
+			  :type (type-context-pointer-type
+				 context (type-context-integer-type context nil 8))))
 	  ((or (verona-name-p datum) (qualified-name-p datum))
            (infer-reference-expression syntax scope))
 	  ((verona-list-p datum)
@@ -3008,9 +3007,9 @@ therefore visible, while the binding being built cannot see itself."
 
 Defined types retain their declaration identity and may be used behind a
 pointer.  Their layout is a later type-definition concern.  CHAR is an ASCII
-byte value and STRING is a pointer-plus-byte-length ASCII value."
+byte value; text literals are NUL-terminated pointers to U8."
   (cond ((or (typep type 'unit-type) (typep type 'boolean-type)
-             (typep type 'char-type) (typep type 'string-type)) t)
+             (typep type 'char-type)) t)
 	((typep type 'integer-type) (member (integer-type-width type) '(8 16 32 64)))
 	((typep type 'float-type) (member (float-type-width type) '(32 64)))
 	((typep type 'pointer-type) (or (typep (pointer-type-pointee type) 'void-type)
@@ -3068,8 +3067,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
          (backend-validation-fail expression "array construction is incomplete"))
        (dolist (element elements)
          (validate-expression-for-backend element)
-         (unless (same-type-p (expression-type element) (array-type-element-type type))
-           (backend-validation-fail expression "array constructor has a non-exact element type")))))
+         (unless (compatible-p (expression-type element) (array-type-element-type type))
+           (backend-validation-fail expression "array constructor has an incompatible element type")))))
     ((typep expression 'index-expression)
      (let ((base (index-expression-base expression))
            (index (index-expression-index expression)))
@@ -3099,8 +3098,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
        (loop for value in values
 	     for field in (product-type-fields product-type)
 	     do (validate-expression-for-backend value)
-		(unless (same-type-p (expression-type value) (product-field-type field))
-		  (backend-validation-fail expression "product constructor has a non-exact field type")))))
+		(unless (compatible-p (expression-type value) (product-field-type field))
+		  (backend-validation-fail expression "product constructor has an incompatible field type")))))
     ((typep expression 'sum-construct-expression)
      (let* ((alternative (sum-construct-expression-alternative expression))
 	    (sum-type (and (typep alternative 'sum-alternative)
@@ -3114,8 +3113,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
        (loop for argument in arguments
 	     for payload-type in (sum-alternative-payload-types alternative)
 	     do (validate-expression-for-backend argument)
-		(unless (same-type-p (expression-type argument) payload-type)
-		  (backend-validation-fail expression "sum constructor has a non-exact payload type")))))
+		(unless (compatible-p (expression-type argument) payload-type)
+		  (backend-validation-fail expression "sum constructor has an incompatible payload type")))))
     ((typep expression 'field-expression)
      (let* ((value (field-expression-value expression))
 	    (field (field-expression-field expression))
@@ -3173,9 +3172,9 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
 			    (typep (let-binding-initializer binding) 'expression))
 		 (backend-validation-fail expression "let binding is incomplete"))
 	       (validate-expression-for-backend (let-binding-initializer binding))
-	       (unless (same-type-p (expression-type (let-binding-initializer binding))
-			    (let-binding-type binding))
-		 (backend-validation-fail expression "let initializer is not exactly typed")))
+       (unless (compatible-p (expression-type (let-binding-initializer binding))
+                             (let-binding-type binding))
+         (backend-validation-fail expression "let initializer is not representable by its binding type")))
 	     (validate-expression-for-backend (let-expression-body expression))
 	     (unless (same-type-p (expression-type expression)
 			  (expression-type (let-expression-body expression)))
@@ -3224,8 +3223,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
      (validate-expression-for-backend (assignment-expression-value expression))
      (unless (and (typep (assignment-expression-target expression) 'place-expression)
 		  (place-expression-writable-p (assignment-expression-target expression))
-		  (same-type-p (expression-type (assignment-expression-target expression))
-		       (expression-type (assignment-expression-value expression)))
+		  (compatible-p (expression-type (assignment-expression-value expression))
+		                (expression-type (assignment-expression-target expression)))
 		  (typep (expression-type expression) 'unit-type))
 	(backend-validation-fail expression "store is not exactly typed")))
     ((typep expression 'sequence-expression)
@@ -3247,8 +3246,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
        (loop for argument in arguments
 	     for parameter in (primitive-operation-parameter-types operation)
 	     do (validate-expression-for-backend argument)
-		(unless (same-type-p (expression-type argument) parameter)
-		  (backend-validation-fail expression "primitive call has a non-exact argument type")))
+		(unless (compatible-p (expression-type argument) parameter)
+		  (backend-validation-fail expression "primitive call has an incompatible argument type")))
        (unless (same-type-p (expression-type expression) (primitive-operation-result-type operation))
 	 (backend-validation-fail expression "primitive call result type disagrees with its operation"))))
     ((typep expression 'external-call-expression)
@@ -3263,8 +3262,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
        (loop for argument in (semantic-call-arguments expression)
 	     for parameter in (function-type-parameters callee-type)
 	     do (validate-expression-for-backend argument)
-		(unless (same-type-p (expression-type argument) parameter)
-		  (backend-validation-fail expression "external call has a non-exact argument type")))
+		(unless (compatible-p (expression-type argument) parameter)
+		  (backend-validation-fail expression "external call has an incompatible argument type")))
        (unless (= (length (semantic-call-arguments expression))
 		  (length (function-type-parameters callee-type)))
 	 (backend-validation-fail expression "external call has an invalid argument count"))
@@ -3284,8 +3283,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
        (loop for argument in (semantic-call-arguments expression)
 	     for parameter in (function-type-parameters callee-type)
 	     do (validate-expression-for-backend argument)
-		(unless (same-type-p (expression-type argument) parameter)
-		  (backend-validation-fail expression "call has a non-exact argument type")))
+		(unless (compatible-p (expression-type argument) parameter)
+		  (backend-validation-fail expression "call has an incompatible argument type")))
        (unless (same-type-p (expression-type expression) (function-type-result callee-type))
 	 (backend-validation-fail expression "call result type disagrees with callee type"))))))
 
@@ -3303,8 +3302,8 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
       (backend-validation-fail nil "function signature is incomplete"))
     (validate-expression-for-backend (semantic-function-declaration-body declaration))
     (unless (or (typep (expression-type (semantic-function-declaration-body declaration)) 'never-type)
-                (same-type-p (expression-type (semantic-function-declaration-body declaration))
-                             (semantic-function-declaration-return-type declaration)))
+                (compatible-p (expression-type (semantic-function-declaration-body declaration))
+                              (semantic-function-declaration-return-type declaration)))
       (backend-validation-fail (semantic-function-declaration-body declaration)
                                "function result is not exactly typed"))))
 
@@ -3362,9 +3361,9 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
                    (backend-validation-fail nil "generic implementation signature is incomplete"))
                  (validate-expression-for-backend body)
                  (unless (or (typep (expression-type body) 'never-type)
-                             (same-type-p (expression-type body)
-                                          (generic-implementation-result-type declaration)))
-                   (backend-validation-fail body "generic implementation result is not exactly typed"))))
+                             (compatible-p (expression-type body)
+                                           (generic-implementation-result-type declaration)))
+                   (backend-validation-fail body "generic implementation result is incompatible"))))
 	      ((typep declaration 'semantic-type-declaration)
 	       (let ((type (semantic-type-declaration-type declaration)))
 		 (unless (or (and (typep type 'opaque-type)
@@ -3395,18 +3394,18 @@ byte value and STRING is a pointer-plus-byte-length ASCII value."
 		   (backend-validation-fail initializer
 			    "top-level aggregate constants are not supported yet"))
 		 (validate-expression-for-backend initializer)
-		 (unless (same-type-p (expression-type initializer)
-				      (semantic-constant-declaration-type declaration))
-		   (backend-validation-fail initializer "constant initializer is not exactly typed"))))
+		 (unless (compatible-p (expression-type initializer)
+			      (semantic-constant-declaration-type declaration))
+		   (backend-validation-fail initializer "constant initializer is incompatible"))))
 	      ((typep declaration 'semantic-variable-declaration)
 	       (let ((initializer (semantic-variable-declaration-initializer declaration)))
 	       (when (typep (semantic-variable-declaration-type declaration) '(or product-type sum-type array-type))
 		   (backend-validation-fail initializer
 			    "top-level aggregate variables are not supported yet"))
 		 (validate-expression-for-backend initializer)
-		 (unless (same-type-p (expression-type initializer)
-				      (semantic-variable-declaration-type declaration))
-		   (backend-validation-fail initializer "variable initializer is not exactly typed"))))))
+		 (unless (compatible-p (expression-type initializer)
+			      (semantic-variable-declaration-type declaration))
+		   (backend-validation-fail initializer "variable initializer is incompatible"))))))
 	;; Generated instances are not source declarations, so validate their
 	;; complete substituted bodies separately.  This is the final guarantee
 	;; that LLVM never observes a TypeParameter or unresolved protocol call.

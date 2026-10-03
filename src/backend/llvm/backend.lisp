@@ -93,7 +93,6 @@ iteration order."
         ((typep type 'verona:void-type) "void")
         ((typep type 'verona:boolean-type) "bool")
         ((typep type 'verona:char-type) "char")
-        ((typep type 'verona:string-type) "string")
         ((typep type 'verona:integer-type)
          (format nil "~:[u~;i~]~D" (verona:integer-type-signed type)
                  (verona:integer-type-width type)))

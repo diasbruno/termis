@@ -114,23 +114,45 @@
 (test lowers-character-and-ascii-string-literals
   (let* ((unit (compile-string
                 (make-compiler)
-                "(constant greeting string \"hello\")
+                "(constant greeting (pointer u8) \"hello\")
                  (function letter () char #\\a)
-                 (function greeting-value () string greeting)"))
+                 (function greeting-value () (pointer u8) greeting)"))
          (backend (verona.backend.llvm:generate-llvm
                    (compilation-unit-semantic-program unit)))
          (ir (verona.backend.llvm:print-llvm-module backend)))
     ;; CHAR is always an ASCII code unit, so a lowers to 97.
     (is (search "ret i8 97" ir))
-    ;; STRING stores ASCII bytes separately from its byte length.
+    ;; Text literals are pointers to NUL-terminated ASCII storage, like char*.
     (is (search ".verona.string.1" ir))
-    (is (search "i64 5" ir))))
+    (is (search "[6 x i8]" ir))
+    (is (not (search "{ ptr, i64 }" ir)))))
+
+(test strings-are-c-compatible-null-terminated-byte-pointers
+  (let* ((unit (compile-string
+                (make-compiler)
+                "(external-function strlen \"strlen\" ((pointer u8)) usize)
+                 (function data () (pointer u8) \"hello\")
+                 (function length () usize
+                   (let ((phrase (pointer u8) \"a quick fox\"))
+                     (strlen phrase)))"))
+         (backend (verona.backend.llvm:generate-llvm
+                   (compilation-unit-semantic-program unit)))
+         (ir (verona.backend.llvm:print-llvm-module backend)))
+    (is (search "declare i64 @strlen(ptr)" ir))
+    (is (not (search "string.data" ir)))
+    (is (not (search "string.length" ir))))
+  (is (= 11
+         (compile-and-run-native
+          "(external-function strlen \"strlen\" ((pointer u8)) usize)
+           (function main () exit-code
+             (let ((phrase (pointer u8) \"a quick fox\"))
+               (%trunc-primitive-u64-i32 (strlen phrase))))"))))
 
 (test lowers-external-c-declarations-with-explicit-linker-names
   (let* ((unit (compile-string
                 (make-compiler)
                 "(external-function release \"free\" ((pointer void)) void)
-                 (external-function string-length \"strlen\" ((pointer i8)) usize)
+                 (external-function strlen \"strlen\" ((pointer i8)) usize)
                  (function main () i64 0)"))
          (backend (verona.backend.llvm:generate-llvm
                    (compilation-unit-semantic-program unit)))

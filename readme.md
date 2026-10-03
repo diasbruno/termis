@@ -63,9 +63,10 @@ The program returns `42`. For smaller runnable examples, including arithmetic,
 bindings, matching, products, sums, generics, and protocols, see
 [`examples/`](examples/) and [its guide](examples/README.md).
 
-Text literals use familiar source syntax: `"hello"` is an immutable ASCII
-`string`, and `#\\a` is a `char` (with named forms such as `#\\space` and
-`#\\newline`).
+Text literals use familiar source syntax: `"hello"` has type `(pointer u8)`
+and is a NUL-terminated `char*`; `#\\a` is a one-byte `char` (with named forms
+such as `#\\space` and `#\\newline`). Use C's `strlen` when a string length is
+needed.
 
 ## Architecture
 

@@ -467,7 +467,6 @@
    #:never-type
    #:boolean-type
    #:char-type
-   #:string-type
    #:integer-type
    #:integer-type-signed
    #:integer-type-width
@@ -513,7 +512,6 @@
    #:unit-machine-representation
    #:type-context-boolean-type
    #:type-context-char-type
-   #:type-context-string-type
    #:type-context-c-int-type
    #:type-context-integer-type
    #:type-context-float-type
