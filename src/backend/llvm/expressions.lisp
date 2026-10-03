@@ -81,6 +81,7 @@
     ((typep expression 'verona:reference-expression)
      (let ((binding (verona:semantic-reference-binding expression)))
        (unless (or (typep binding 'verona:parameter-binding)
+                   (typep binding 'verona:let-binding)
                    (typep binding 'verona:variable-declaration))
          (backend-fail "semantic binding ~S is not an LLVM place" binding))
        (backend-binding backend binding)))
@@ -356,11 +357,19 @@ only job here is to form the CFG and merge non-terminating case values."
            (llvm:const-int (lower-type backend (verona:expression-type expression)) 0))))
 
     ((typep expression 'verona:let-expression)
+     ;; LET bindings are source-immutable but addressable.  Give each one
+     ;; stable local storage so an address taken in the body remains valid.
      ;; Binding identity is the environment key, so nested shadowing needs no
      ;; LLVM-level name lookup or environment restoration.
      (dolist (binding (verona:let-expression-bindings expression))
-       (setf (backend-binding backend binding)
-             (emit-value backend (verona:let-binding-initializer binding))))
+       (let ((address (llvm:build-alloca
+                       (llvm-backend-builder backend)
+                       (lower-type backend (verona:let-binding-type binding))
+                       "let.addr")))
+         (llvm:build-store (llvm-backend-builder backend)
+                           (emit-value backend (verona:let-binding-initializer binding))
+                           address)
+         (setf (backend-binding backend binding) address)))
      (emit-value backend (verona:let-expression-body expression)))
 
     ((typep expression 'verona:return-expression)

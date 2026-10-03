@@ -206,7 +206,7 @@
              (%trunc-primitive-i64-i32 (total (Pair 20 22))))"))
     (is (= 42 (compile-and-run-native source)))))
 
-(test lowers-let-bindings-as-ssa-values-and-executes-them
+(test lowers-addressable-let-bindings-and-executes-them
   (let* ((source (format nil
                          "(function sequential () i64~%
                             (let ((x i64 20)~%
@@ -227,11 +227,21 @@
                    (compilation-unit-semantic-program unit)))
          (ir (verona.backend.llvm:print-llvm-module backend)))
     (is (search "add i64" ir))
-    ;; Only parameter lowering creates storage in the current backend.  The
-    ;; two parameter-free LET functions must therefore remain SSA-only.
-    (is (not (search "alloca" (subseq ir 0 (or (search "define i64 @__verona_00006D" ir)
-                                                 (length ir))))))
+    ;; LET bindings have stable local storage because their addresses may be
+    ;; taken, including in parameter-free functions.
+    (is (search "let.addr" ir))
     (is (= 52 (compile-and-run-native source)))))
+
+(test passes-addresses-of-let-bindings-to-functions
+  (let ((source
+          "(function write ((address (pointer i64))) unit
+              (do (store (deref address) 42) unit))
+            (function local () i64
+              (let ((x i64 0))
+                (do (write (& x)) x)))
+            (function main () exit-code
+              (%trunc-primitive-i64-i32 (local)))"))
+    (is (= 42 (compile-and-run-native source)))))
 
 (test lowers-products-as-ssa-aggregates-and-executes-them
   (let* ((source

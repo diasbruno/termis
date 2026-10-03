@@ -917,7 +917,9 @@
     (is (typep let-expression 'let-expression))
     (is (typep binding 'let-binding))
     (is (eq (let-binding-type binding) (semantic-expression-type let-expression)))
-    (is (eq binding (semantic-reference-binding (let-expression-body let-expression))))
+    (is (eq binding
+            (semantic-reference-binding
+             (load-expression-place (let-expression-body let-expression)))))
     (is (eq program (validate-for-backend program)))))
 
 (test resolves-let-bindings-sequentially
@@ -932,8 +934,10 @@
          (y (second bindings)))
     (is (= 2 (length bindings)))
     (is (eq x (semantic-reference-binding
-               (first (semantic-call-arguments (let-binding-initializer y))))))
-    (is (eq y (semantic-reference-binding (let-expression-body let-expression))))
+               (load-expression-place
+                (first (semantic-call-arguments (let-binding-initializer y)))))))
+    (is (eq y (semantic-reference-binding
+               (load-expression-place (let-expression-body let-expression)))))
     (is (eq program (validate-for-backend program)))))
 
 (test resolves-nested-let-shadowing-by-binding-identity
@@ -948,7 +952,8 @@
          (inner-binding (first (let-expression-bindings inner-let))))
     (is (not (eq outer-binding inner-binding)))
     (is (eq inner-binding
-            (semantic-reference-binding (let-expression-body inner-let))))
+            (semantic-reference-binding
+             (load-expression-place (let-expression-body inner-let)))))
     (is (eq program (validate-for-backend program)))))
 
 (test resolves-a-let-initializer-before-its-own-binding
@@ -963,9 +968,11 @@
          (inner-binding (first (let-expression-bindings inner-let))))
     ;; The inner initializer is resolved before its own binding is installed.
     (is (eq outer-binding
-            (semantic-reference-binding (let-binding-initializer inner-binding))))
+            (semantic-reference-binding
+             (load-expression-place (let-binding-initializer inner-binding)))))
     (is (eq inner-binding
-            (semantic-reference-binding (let-expression-body inner-let))))
+            (semantic-reference-binding
+             (load-expression-place (let-expression-body inner-let)))))
     (is (eq program (validate-for-backend program)))))
 
 (test propagates-never-through-let
@@ -1003,10 +1010,21 @@
     (compile-string (make-compiler)
                     "(function write () i64 (let ((x i64 10)) (assign x 42) x))")))
 
-(test rejects-address-taking-of-let-bindings
-  (signals not-addressable-error
-    (compile-string (make-compiler)
-                    "(function address () (pointer i64) (let ((x i64 10)) (& x)))")))
+(test makes-let-bindings-addressable-but-not-writable
+  (let* ((unit (compile-string
+                (make-compiler)
+                "(function address () (pointer i64) (let ((x i64 10)) (& x)))"))
+         (program (compilation-unit-semantic-program unit))
+         (function (semantic-program-declaration program (first (unit-declarations unit))))
+         (let-expression (semantic-function-declaration-body function))
+         (address (let-expression-body let-expression))
+         (binding (first (let-expression-bindings let-expression)))
+         (place (verona:address-expression-operand address)))
+    (is (typep address 'address-expression))
+    (is (eq binding (semantic-reference-binding place)))
+    (is (place-expression-addressable-p place))
+    (is (not (place-expression-writable-p place)))
+    (is (eq program (validate-for-backend program)))))
 
 (test rejects-local-variable-definitions
   (signals invalid-definition-context-error

@@ -123,7 +123,7 @@ the named spellings are case-insensitive. Unicode characters are not supported y
 
 | Form or function | Signature / behavior |
 | --- | --- |
-| `(let ((name Type initializer) ...) body)` | Introduces sequential lexical bindings. Each initializer is resolved before its own name enters scope. |
+| `(let ((name Type initializer) ...) body)` | Introduces sequential immutable lexical bindings. Each initializer is resolved before its own name enters scope; a binding's address may be taken with `&`, but it cannot be assigned through its name. |
 | `(match value (pattern expression) ...)` | Exhaustive pattern match. Supports `true`, `false`, integer literals, `_`, bindings, and sum constructor patterns. |
 | `(return value)` | Return from the enclosing function. |
 | `(do expression...)` | Evaluate expressions in order and return the last value. |

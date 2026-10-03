@@ -385,8 +385,10 @@ the semantic type of a unit expression remains UnitType."
   ((syntax :initarg :syntax :reader pattern-binding-syntax)
    (type :initarg :type :reader pattern-binding-type)))
 
-;; A LET-BINDING is a semantic identity, not a request for storage.  Its
-;; initializer is resolved before the binding enters its lexical scope.
+;; A LET-BINDING is an immutable semantic identity.  It is nevertheless
+;; addressable: taking its address materializes stable local storage in the
+;; backend.  Its initializer is resolved before the binding enters its
+;; lexical scope.
 (defclass let-binding (semantic-binding)
   ((syntax :initarg :syntax :reader let-binding-syntax :reader let-binding-source)
    (type-syntax :initarg :type-syntax :reader let-binding-type-syntax)
@@ -2113,9 +2115,11 @@ recursive call can refer to the same concrete LLVM function."
   "Return addressable and writable flags for a reference binding.
 
 Parameters are deliberately addressable and writable in this initial model;
-they represent parameter storage rather than C's accidental value category."
+they represent parameter storage rather than C's accidental value category.
+LET bindings are addressable but remain immutable through their source name."
   (cond ((typep binding 'parameter-binding) (values t t))
 	((typep binding 'variable-declaration) (values t t))
+	((typep binding 'let-binding) (values t nil))
 	(t (values nil nil))))
 
 (defun infer-reference-expression (syntax scope)
