@@ -9,8 +9,8 @@
 
 ;; `verona-mode' provides editing support for Verona's S-expression syntax.
 ;; It recognizes source files ending in .vrn or .verona, as well as a project's
-;; verona.build file.  Verona deliberately has no line-comment syntax; this
-;; mode therefore does not assign comment syntax to any character.
+;; verona.build file.  Semicolons introduce comments that continue to the end
+;; of the line.
 
 ;;; Code:
 
@@ -42,6 +42,8 @@
     (modify-syntax-entry ?) ")(" table)
     (modify-syntax-entry ?\" "\"" table)
     (modify-syntax-entry ?\\ "\\" table)
+    (modify-syntax-entry ?\; "<" table)
+    (modify-syntax-entry ?\n ">" table)
     table)
   "Syntax table for `verona-mode'.")
 
@@ -86,8 +88,8 @@ arguments for short forms."
   (setq-local font-lock-defaults '(verona-font-lock-keywords))
   (setq-local indent-line-function #'lisp-indent-line)
   (setq-local lisp-indent-function #'verona-indent-function)
-  (setq-local comment-start nil)
-  (setq-local comment-end nil)
+  (setq-local comment-start ";")
+  (setq-local comment-end "")
   (setq-local indent-tabs-mode nil))
 
 ;;;###autoload

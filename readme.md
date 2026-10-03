@@ -68,6 +68,8 @@ and is a NUL-terminated `char*`; `#\\a` is a one-byte `char` (with named forms
 such as `#\\space` and `#\\newline`). Use C's `strlen` when a string length is
 needed.
 
+Use `;` for a source comment through the end of its line.
+
 ## Architecture
 
 The compiler is organized as a reusable front end, an LLVM backend, and a

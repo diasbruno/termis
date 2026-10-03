@@ -60,7 +60,7 @@
 (defun verona-delimiter-p (character)
   (or (null character)
       (verona-whitespace-p character)
-      (find character "()\"" :test #'char=)))
+      (find character "();\"" :test #'char=)))
 
 (defun feature-name-string (feature)
   "Return FEATURE's case-insensitive external spelling.
@@ -81,6 +81,21 @@ feature spelling while preserving the language's case-sensitive identifiers."
 (defun skip-whitespace (state)
   (loop while (verona-whitespace-p (reader-peek state))
         do (reader-advance state)))
+
+(defun skip-line-comment (state)
+  "Consume a semicolon comment, leaving its line ending for whitespace handling."
+  (loop for character = (reader-peek state)
+        while (and character
+                   (not (member character '(#\Newline #\Return) :test #'char=)))
+        do (reader-advance state)))
+
+(defun skip-layout (state)
+  "Consume whitespace and semicolon-to-end-of-line comments."
+  (loop do (skip-whitespace state)
+            (if (and (reader-peek state)
+                     (char= (reader-peek state) #\;))
+                (skip-line-comment state)
+                (return))))
 
 (defun decimal-digits-p (text start end)
   (and (< start end)
@@ -232,7 +247,7 @@ distinct CHAR type later."
   (incf (reader-state-nesting-depth state))
   (unwind-protect
        (let ((elements '()))
-         (loop do (skip-whitespace state)
+         (loop do (skip-layout state)
                    (when (reader-at-end-p state)
                      (reader-fail state "unterminated list" start))
                    (when (char= (reader-peek state) #\))
@@ -268,7 +283,7 @@ distinct CHAR type later."
                          (not (feature-available-p state feature)))))))))
 
 (defun read-form (state)
-  (skip-whitespace state)
+  (skip-layout state)
   (when (reader-at-end-p state)
     (reader-fail state "unexpected end of input"))
   (let* ((start (reader-state-offset state))
@@ -306,7 +321,7 @@ spelling is case-insensitive; ordinary Verona identifiers remain case-sensitive.
   (check-type source source)
   (let ((state (make-reader-state source (mapcar #'feature-name-string features)))
         (forms '()))
-    (loop do (skip-whitespace state)
+    (loop do (skip-layout state)
               (when (reader-at-end-p state)
                 (return (nreverse forms)))
               (multiple-value-bind (form present-p) (read-form state)

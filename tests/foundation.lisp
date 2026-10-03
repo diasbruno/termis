@@ -213,6 +213,31 @@
     (is (string= "hello" (syntax-datum (fifth forms))))
     (is (unit-literal-p (syntax-datum (sixth forms))))))
 
+(test reads-single-line-comments
+  (let* ((source (make-source "comments.vrn"
+                              "; a top-level comment~%
+(foo; an inner comment~%
+  bar) ; a trailing comment~%
+; another top-level comment~%
+baz"))
+         (forms (read-source source))
+         (list (syntax-datum (first forms))))
+    (is (= 2 (length forms)))
+    (is (verona-list-p list))
+    (is (= 2 (length (verona-list-elements list))))
+    (is (string= "foo"
+                 (verona-symbol-name
+                  (syntax-datum (first (verona-list-elements list))))))
+    (is (string= "bar"
+                 (verona-symbol-name
+                  (syntax-datum (second (verona-list-elements list))))))
+    (is (string= "baz" (verona-symbol-name (syntax-datum (second forms))))))
+  ;; Semicolons remain ordinary data inside literals.
+  (let ((forms (read-source (make-source "comments.vrn" "\";\" #\\; ; comment"))))
+    (is (= 2 (length forms)))
+    (is (string= ";" (syntax-datum (first forms))))
+    (is (char= #\; (syntax-datum (second forms))))))
+
 (test reads-common-lisp-style-character-literals
   (let ((forms (read-source (make-source "characters.vrn" "#\\a #\\space #\\newline #\\)"))))
     (is (= 4 (length forms)))

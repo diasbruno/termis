@@ -115,6 +115,10 @@ pointer width (`pointer_32` or `pointer_64`), endianness (`little_endian` or
 
 ### Expressions and callable operations
 
+Single-line comments begin with `;` and continue through the end of the line.
+They are accepted anywhere whitespace is accepted, but a semicolon inside a
+string or character literal remains literal data.
+
 String literals use double quotes and accept ASCII only; they support `\\n`, `\\t`,
 `\\"`, and `\\\\`. Unicode strings will use a separate `#ustring"..."` spelling.
 Character literals use Common Lisp spelling: `#\\a`, `#\\space`, `#\\newline`,
