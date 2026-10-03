@@ -187,11 +187,15 @@
                            target fallback)))
     (llvm:position-builder-at-end builder fallback)))
 
-(defun emit-match-value (backend expression)
+(defun emit-match-value (backend expression &optional tail-caller)
   "Lower a resolved match without re-evaluating its scrutinee.
 
 The semantic checker guarantees exhaustiveness and compatible patterns.  The
-only job here is to form the CFG and merge non-terminating case values."
+only job here is to form the CFG and merge non-terminating case values.
+
+When TAIL-CALLER is non-NIL, each case is a function-result position.  Emit
+its return directly rather than merging case values, so a tail call stays
+immediately adjacent to its RET."
   (let* ((builder (llvm-backend-builder backend))
 	 (function (llvm:basic-block-parent (llvm:insertion-block builder)))
 	 (scrutinee (emit-value backend (verona:match-expression-value expression)))
@@ -201,7 +205,8 @@ only job here is to form the CFG and merge non-terminating case values."
 				 (llvm:append-basic-block function "match.case"
 							  :context (llvm-backend-context backend)))
 			       cases))
-	 (terminatingp (typep (verona:expression-type expression) 'verona:never-type))
+	 (terminatingp (or tail-caller
+                         (typep (verona:expression-type expression) 'verona:never-type)))
 	 (end-block (unless terminatingp
 		      (llvm:append-basic-block function "match.end"
 					       :context (llvm-backend-context backend))))
@@ -229,11 +234,13 @@ only job here is to form the CFG and merge non-terminating case values."
 	       (let ((pattern (verona:match-case-pattern case)))
 		 (emit-pattern-bindings backend scrutinee pattern))
 	       (let ((branch (verona:match-case-expression case)))
-		 (let ((value (emit-value backend branch))
-		       (source (llvm:insertion-block builder)))
-		   (unless (typep (verona:expression-type branch) 'verona:never-type)
-		     (llvm:build-br builder end-block)
-		     (push (cons value source) incoming)))))
+		 (if tail-caller
+		     (emit-tail-return backend branch tail-caller)
+		     (let ((value (emit-value backend branch))
+		           (source (llvm:insertion-block builder)))
+		       (unless (typep (verona:expression-type branch) 'verona:never-type)
+		         (llvm:build-br builder end-block)
+		         (push (cons value source) incoming))))))
       (unless terminatingp
 	(llvm:position-builder-at-end builder end-block)
 	(cond ((typep (verona:expression-type expression) 'verona:unit-type)
@@ -245,9 +252,113 @@ only job here is to form the CFG and merge non-terminating case values."
 		   (llvm:add-incoming phi
 			      (coerce (mapcar #'car incoming) 'vector)
 			      (coerce (mapcar #'cdr incoming) 'vector))
-		   phi)))))))
+	   phi)))))))
 
-(defun emit-value (backend expression)
+(defun tail-call-kind (backend caller callee)
+  "Choose MUSTTAIL for identical LLVM function types, otherwise TAIL.
+
+CALLER is a semantic declaration while CALLEE may be its retained source
+binding.  Backend identities map both forms to their LLVM function values, so
+compare the LLVM ABI directly instead of relying on frontend object identity."
+  (if (cffi:pointer-eq
+       (llvm::global-value-type (backend-binding backend caller))
+       (llvm::global-value-type (backend-binding backend callee)))
+      :must-tail
+      :tail))
+
+(defun mark-tail-call (backend call caller callee)
+  (setf (llvm:tail-call-kind call) (tail-call-kind backend caller callee))
+  call)
+
+(defun emit-let-bindings (backend expression)
+  "Initialize EXPRESSION's lexical bindings and install their LLVM storage."
+  (dolist (binding (verona:let-expression-bindings expression))
+    (let ((address (llvm:build-alloca
+                    (llvm-backend-builder backend)
+                    (lower-type backend (verona:let-binding-type binding))
+                    "let.addr")))
+      (llvm:build-store (llvm-backend-builder backend)
+                        (emit-value backend (verona:let-binding-initializer binding))
+                        address)
+      (setf (backend-binding backend binding) address))))
+
+(defun value-type-contains-pointer-p (type)
+  "Whether a by-value TYPE can carry an address from the current frame."
+  (cond ((typep type 'verona:pointer-type) t)
+        ((typep type 'verona:array-type)
+         (value-type-contains-pointer-p (verona:array-type-element-type type)))
+        ((typep type 'verona:product-type)
+         (some (lambda (field)
+                 (value-type-contains-pointer-p (verona:product-field-type field)))
+               (verona:product-type-fields type)))
+        ((typep type 'verona:sum-type)
+         (some (lambda (alternative)
+                 (some #'value-type-contains-pointer-p
+                       (verona:sum-alternative-payload-types alternative)))
+               (verona:sum-type-alternatives type)))
+        (t nil)))
+
+(defun tail-call-expression-p (expression)
+  ;; A tail call cannot safely pass an address owned by the current frame:
+  ;; that storage dies when the frame is removed.  The first implementation
+  ;; therefore accepts only direct Verona calls whose arguments contain no
+  ;; pointer-bearing value.  This deliberately leaves foreign calls and
+  ;; pointer-bearing arguments as ordinary calls until escape analysis can
+  ;; prove them safe.
+  (and (typep expression 'verona:semantic-call)
+       (every (lambda (argument)
+                (not (value-type-contains-pointer-p
+                      (verona:expression-type argument))))
+              (verona:semantic-call-arguments expression))))
+
+(defun contains-tail-call-p (expression)
+  "Whether EXPRESSION contains a direct call in one of its tail positions."
+  (cond ((typep expression 'verona:return-expression)
+         (contains-tail-call-p (verona:return-expression-value expression)))
+        ((typep expression 'verona:sequence-expression)
+         (let ((expressions (verona:sequence-expression-expressions expression)))
+           (and expressions (contains-tail-call-p (car (last expressions))))))
+        ((typep expression 'verona:let-expression)
+         (contains-tail-call-p (verona:let-expression-body expression)))
+        ((typep expression 'verona:match-expression)
+         (some (lambda (case)
+                 (contains-tail-call-p (verona:match-case-expression case)))
+               (verona:match-expression-cases expression)))
+        (t (tail-call-expression-p expression))))
+
+(defun emit-tail-return (backend expression caller)
+  "Emit EXPRESSION as CALLER's result, preserving all syntactic tail positions."
+  (cond
+    ((typep expression 'verona:return-expression)
+     (emit-tail-return backend (verona:return-expression-value expression) caller))
+    ((typep expression 'verona:sequence-expression)
+     (let ((expressions (verona:sequence-expression-expressions expression)))
+       (if expressions
+           (progn
+             (dolist (child (butlast expressions))
+               (emit-value backend child))
+             (emit-tail-return backend (car (last expressions)) caller))
+           (llvm:build-ret (llvm-backend-builder backend)
+                           (unit-value backend expression)))))
+    ((typep expression 'verona:let-expression)
+     (emit-let-bindings backend expression)
+     (emit-tail-return backend (verona:let-expression-body expression) caller))
+    ((typep expression 'verona:match-expression)
+     ;; Preserve the usual value/phi lowering when no branch has a tail call.
+     ;; Direct-return CFG is only necessary for a branch that needs its call
+     ;; immediately followed by RET.
+     (if (contains-tail-call-p expression)
+         (emit-match-value backend expression caller)
+         (llvm:build-ret (llvm-backend-builder backend)
+                         (emit-value backend expression))))
+    (t
+     (let ((value (if (tail-call-expression-p expression)
+                      (emit-value backend expression :tail-caller caller)
+                      (emit-value backend expression))))
+       (unless (typep (verona:expression-type expression) 'verona:never-type)
+         (llvm:build-ret (llvm-backend-builder backend) value))))))
+
+(defun emit-value (backend expression &key tail-caller)
   "Emit EXPRESSION's already-resolved LLVM value."
   (cond
     ((typep expression 'verona:unit-expression)
@@ -357,15 +468,7 @@ only job here is to form the CFG and merge non-terminating case values."
      ;; stable local storage so an address taken in the body remains valid.
      ;; Binding identity is the environment key, so nested shadowing needs no
      ;; LLVM-level name lookup or environment restoration.
-     (dolist (binding (verona:let-expression-bindings expression))
-       (let ((address (llvm:build-alloca
-                       (llvm-backend-builder backend)
-                       (lower-type backend (verona:let-binding-type binding))
-                       "let.addr")))
-         (llvm:build-store (llvm-backend-builder backend)
-                           (emit-value backend (verona:let-binding-initializer binding))
-                           address)
-         (setf (backend-binding backend binding) address)))
+     (emit-let-bindings backend expression)
      (emit-value backend (verona:let-expression-body expression)))
 
     ((typep expression 'verona:return-expression)
@@ -386,7 +489,10 @@ only job here is to form the CFG and merge non-terminating case values."
 	   (progn
 	     (llvm:build-call (llvm-backend-builder backend) function arguments)
 	     (unit-value backend expression))
-	   (llvm:build-call (llvm-backend-builder backend) function arguments "call"))))
+	   (let ((call (llvm:build-call (llvm-backend-builder backend) function arguments "call")))
+	     (if tail-caller
+		 (mark-tail-call backend call tail-caller external)
+		 call)))))
     ((typep expression 'verona:semantic-call)
      (let ((callee (verona:semantic-call-callee expression)))
        (unless (and (typep callee 'verona:reference-expression)
@@ -396,10 +502,14 @@ only job here is to form the CFG and merge non-terminating case values."
                                 verona:semantic-protocol-operation-implementation
                                 verona:semantic-generic-implementation)))
          (backend-fail "ordinary call has no resolved concrete callable"))
-       (llvm:build-call
-        (llvm-backend-builder backend)
-        (backend-binding backend (verona:semantic-reference-binding callee))
-        (mapcar (lambda (argument) (emit-value backend argument))
-                (verona:semantic-call-arguments expression))
-        "call")))
+       (let* ((declaration (verona:semantic-reference-binding callee))
+              (call (llvm:build-call
+                     (llvm-backend-builder backend)
+                     (backend-binding backend declaration)
+                     (mapcar (lambda (argument) (emit-value backend argument))
+                             (verona:semantic-call-arguments expression))
+                     "call")))
+         (if tail-caller
+             (mark-tail-call backend call tail-caller declaration)
+             call))))
     (t (backend-fail "expression ~S has no LLVM value lowering" expression))))

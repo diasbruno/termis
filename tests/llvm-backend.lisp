@@ -56,6 +56,42 @@
     (is (search "add i64" ir))
     (is (search "call i64 @__verona_000061000064000064(i64 20, i64 22)" ir))))
 
+(test marks-calls-in-tail-position
+  (let* ((unit (compile-string
+                (make-compiler)
+                "(function countdown ((number i64) (total i64)) i64
+                    (match (%=-primitive-i64 number 0)
+                      (true total)
+                      (false
+                        (let ((next i64 (%--primitive-i64 number 1)))
+                          (do (countdown next (%+-primitive-i64 total 1)))))))
+                  (function widen ((number i32)) i64
+                    (countdown (%sext-primitive-i32-i64 number) 0))
+                  (function read ((address (pointer i64))) i64 (deref address))
+                  (function through-address ((value i64)) i64 (read (& value)))"))
+         (backend (verona.backend.llvm:generate-llvm
+                   (compilation-unit-semantic-program unit)))
+         (ir (verona.backend.llvm:print-llvm-module backend)))
+    ;; COUNTDOWN calls itself from a MATCH/LET/sequence tail position.  Its
+    ;; exact ABI matches, so LLVM verifies the stronger MUSTTAIL contract.
+    (is (search "musttail call i64 @__verona_00006300006F00007500006E00007400006400006F00007700006E" ir))
+    ;; WIDEN returns COUNTDOWN directly but has a different argument ABI.
+    ;; It retains LLVM's best-effort TAIL hint rather than claiming MUSTTAIL.
+    (is (search "= tail call i64 @__verona_00006300006F00007500006E00007400006400006F00007700006E" ir))
+    ;; An address of THROUGH-ADDRESS's local parameter must keep the current
+    ;; frame alive through READ, so this tail-position call remains ordinary.
+    (is (not (search "tail call i64 @__verona_000072000065000061000064" ir))))
+  ;; This depth is deliberately far beyond the ordinary native stack budget.
+  ;; It verifies the MUSTTAIL lowering survives object emission and linking.
+  (is (= 0
+         (compile-and-run-native
+          "(function recurse ((number i64)) i64
+              (match (%=-primitive-i64 number 0)
+                (true 0)
+                (false (recurse (%--primitive-i64 number 1)))))
+            (function main () exit-code
+              (%trunc-primitive-i64-i32 (recurse 1000000)))"))))
+
 (test lowers-and-executes-generic-dispatch
   (let ((source
           "(generic combine (left right))

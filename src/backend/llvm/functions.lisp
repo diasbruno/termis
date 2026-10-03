@@ -134,10 +134,9 @@
                (llvm:build-store (llvm-backend-builder backend) llvm-parameter address)
                (setf (backend-binding backend parameter) address)))
     (let ((body (verona:semantic-function-declaration-body declaration)))
-      ;; A NeverType body has already emitted its terminator (currently an
-      ;; explicit return).  Emitting another instruction would corrupt LLVM.
-      (unless (typep (verona:expression-type body) 'verona:never-type)
-	(llvm:build-ret (llvm-backend-builder backend) (emit-value backend body))))
+      ;; Emit the result position directly so an eligible final call can be
+      ;; annotated as LLVM tail/musttail and remain adjacent to its return.
+      (emit-tail-return backend body declaration))
     function))
 
 (defun define-generic-implementation (backend declaration)
@@ -156,6 +155,5 @@
                (llvm:build-store (llvm-backend-builder backend) llvm-parameter address)
                (setf (backend-binding backend parameter) address)))
     (let ((body (verona:generic-implementation-body declaration)))
-      (unless (typep (verona:expression-type body) 'verona:never-type)
-        (llvm:build-ret (llvm-backend-builder backend) (emit-value backend body))))
+      (emit-tail-return backend body declaration))
     function))

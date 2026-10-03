@@ -34,7 +34,7 @@
                 url = "https://github.com/diasbruno/CL-LLVM.git";
                 # diasbruno/CL-LLVM's LLVM 23 update branch.  Keep this
                 # revision and LLVM in lockstep: it uses opaque-pointer APIs.
-                rev = "cea0ba46ee61b3e7f7237d0aaad8b83bcf926e30";
+                rev = "82fd91e412d0cd5bade910b92c2dfbfe2420043d";
               };
               lisp = pkgs.sbcl.withPackages (ps: [
                 ps.fiveam
@@ -63,7 +63,7 @@
                 export LD_LIBRARY_PATH="${pkgs.llvmPackages_23.llvm.lib}/lib:''${LD_LIBRARY_PATH:-}"
                 export DYLD_LIBRARY_PATH="${pkgs.llvmPackages_23.llvm.lib}/lib:''${DYLD_LIBRARY_PATH:-}"
                 echo "Verona development shell: SBCL $(sbcl --version)"
-                echo "LLVM $(llvm-config --version), CL-LLVM cea0ba4"
+                echo "LLVM $(llvm-config --version), CL-LLVM 82fd91e"
               '';
             };
         }
