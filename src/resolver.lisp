@@ -622,6 +622,7 @@ the semantic type of a unit expression remains UnitType."
 (defclass literal-pattern (pattern)
   ((value :initarg :value :reader literal-pattern-value)))
 (defclass boolean-pattern (literal-pattern) ())
+(defclass character-pattern (literal-pattern) ())
 (defclass integer-pattern (literal-pattern) ())
 (defclass wildcard-pattern (pattern) ())
 (defclass binding-pattern (pattern)
@@ -2609,13 +2610,26 @@ therefore visible, while the binding being built cannot see itself."
                                              (error 'invalid-expression-error :syntax payload-syntax
                                                     :message "nested constructor patterns are not supported yet"))
                                         collect (analyze-pattern payload-syntax scope payload-type))))))))
-          ((verona-boolean-literal-p datum)
+	  ((verona-boolean-literal-p datum)
 	   (unless (typep scrutinee-type 'boolean-type)
 	     (error 'type-mismatch-error :syntax syntax
 		    :actual (type-context-boolean-type (semantic-scope-owning-type-context scope))
 		    :expected scrutinee-type))
 	   (make-instance 'boolean-pattern :syntax syntax :type scrutinee-type
 			  :value (verona-boolean-literal-value datum)))
+	  ((characterp datum)
+	   (let ((character-type (type-context-char-type
+				  (semantic-scope-owning-type-context scope))))
+	     (cond ((typep scrutinee-type 'char-type)
+		    (make-instance 'character-pattern :syntax syntax :type scrutinee-type
+				   :value (char-code datum)))
+		   ;; getchar returns C int.  Accept character syntax here so clients can
+		   ;; match its ASCII result without an ABI-unsafe narrowing declaration.
+		   ((typep scrutinee-type 'integer-type)
+		    (make-instance 'integer-pattern :syntax syntax :type scrutinee-type
+				   :value (char-code datum)))
+		   (t (error 'type-mismatch-error :syntax syntax :actual character-type
+			     :expected scrutinee-type)))))
 	  ((integerp datum)
 	   (unless (typep scrutinee-type 'integer-type)
 	     (error 'type-mismatch-error :syntax syntax
@@ -2649,6 +2663,8 @@ therefore visible, while the binding being built cannot see itself."
            (constructor-pattern-complete-p covered))
       (and (typep pattern 'boolean-pattern) (typep covered 'boolean-pattern)
 	   (eql (literal-pattern-value pattern) (literal-pattern-value covered)))
+	  (and (typep pattern 'character-pattern) (typep covered 'character-pattern)
+	   (= (literal-pattern-value pattern) (literal-pattern-value covered)))
       (and (typep pattern 'integer-pattern) (typep covered 'integer-pattern)
 	   (= (literal-pattern-value pattern) (literal-pattern-value covered)))))
 
@@ -3133,7 +3149,8 @@ byte value; text literals are NUL-terminated pointers to U8."
     ((typep expression 'match-expression)
      (validate-expression-for-backend (match-expression-value expression))
 	     (unless (or (typep (expression-type (match-expression-value expression)) 'boolean-type)
-			 (typep (expression-type (match-expression-value expression)) 'integer-type)
+		 (typep (expression-type (match-expression-value expression)) 'char-type)
+		 (typep (expression-type (match-expression-value expression)) 'integer-type)
 			 (typep (expression-type (match-expression-value expression)) 'sum-type))
 	       (backend-validation-fail expression "match scrutinee has no LLVM comparison lowering"))
      (dolist (case (match-expression-cases expression))

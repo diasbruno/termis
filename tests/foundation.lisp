@@ -57,7 +57,7 @@
 		#:let-binding #:let-binding-type #:let-binding-initializer
 		#:match-expression #:match-expression-value #:match-expression-cases
 		#:match-case #:match-case-pattern #:match-case-scope #:match-case-expression
-		#:boolean-pattern #:integer-pattern #:wildcard-pattern #:binding-pattern
+		#:boolean-pattern #:character-pattern #:integer-pattern #:wildcard-pattern #:binding-pattern
 		#:binding-pattern-binding #:pattern-binding #:pattern-binding-type
 		#:return-expression #:return-expression-value #:never-type
 		#:assignment-expression #:assignment-expression-target
@@ -265,6 +265,22 @@ baz"))
     (is (eq (type-context-char-type context)
             (semantic-function-declaration-return-type letter)))
     (is (typep (semantic-function-declaration-body greeting) 'string-literal))))
+
+(test resolves-character-match-patterns
+  (let* ((unit (compile-string
+                (make-compiler)
+                "(function choose ((operator char)) i32 (match operator (#\\+ 1) (_ 0)))\
+                 (function c-input ((operator i32)) i32 (match operator (#\\- 1) (_ 0)))"))
+         (program (compilation-unit-semantic-program unit))
+         (choose (semantic-program-declaration program (first (unit-declarations unit))))
+         (c-input (semantic-program-declaration program (second (unit-declarations unit))))
+         (choose-pattern (match-case-pattern
+                          (first (match-expression-cases (semantic-function-declaration-body choose)))))
+         (input-pattern (match-case-pattern
+                         (first (match-expression-cases (semantic-function-declaration-body c-input))))))
+    (is (typep choose-pattern 'character-pattern))
+    (is (typep input-pattern 'integer-pattern))
+    (is (eq program (validate-for-backend program)))))
 
 (test reads-nested-lists-with-spans
   (let* ((source (make-source "nested.vrn" (format nil "(foo~%  (bar 10)~%  baz)")))

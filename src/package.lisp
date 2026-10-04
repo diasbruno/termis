@@ -396,6 +396,7 @@
    #:literal-pattern
    #:literal-pattern-value
    #:boolean-pattern
+   #:character-pattern
    #:integer-pattern
    #:wildcard-pattern
    #:binding-pattern
