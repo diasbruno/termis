@@ -1,0 +1,14 @@
+(import libc.types :as types)
+
+;; NUL-terminated C-string functions.  c-string must point to a valid byte
+;; sequence ending in zero.
+(external-function strlen "strlen" (types:c-string) types:size-t)
+(external-function strcmp "strcmp" (types:c-string types:c-string) types:c-int)
+(external-function strncmp "strncmp" (types:c-string types:c-string types:size-t) types:c-int)
+(external-function strcpy "strcpy" (types:c-string types:c-string) types:c-string)
+(external-function strncpy "strncpy" (types:c-string types:c-string types:size-t) types:c-string)
+(external-function strchr "strchr" (types:c-string types:c-int) types:c-string)
+(external-function strstr "strstr" (types:c-string types:c-string) types:c-string)
+(external-function strerror "strerror" (types:c-int) types:c-string)
+
+(export strlen strcmp strncmp strcpy strncpy strchr strstr strerror)

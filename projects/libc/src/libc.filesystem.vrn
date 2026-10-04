@@ -1,0 +1,13 @@
+(import libc.types :as types)
+
+;; Filesystem metadata and directory operations.  Structure types remain opaque
+;; until their ABI layouts are modelled explicitly.
+(external-function stat "stat" (types:c-string (pointer types:file-status)) types:c-int)
+(external-function mkdir "mkdir" (types:c-string types:mode-t) types:c-int)
+(external-function unlink "unlink" (types:c-string) types:c-int)
+(external-function rename "rename" (types:c-string types:c-string) types:c-int)
+(external-function opendir "opendir" (types:c-string) (pointer types:directory-stream))
+(external-function readdir "readdir" ((pointer types:directory-stream)) (pointer void))
+(external-function closedir "closedir" ((pointer types:directory-stream)) types:c-int)
+
+(export stat mkdir unlink rename opendir readdir closedir)

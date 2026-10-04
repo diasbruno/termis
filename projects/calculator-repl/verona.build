@@ -1,0 +1,6 @@
+(executable calculator
+  (root calculator)
+  (module-path "src")
+  (module-path "../libc/src")
+  (target native)
+  (optimize 0))

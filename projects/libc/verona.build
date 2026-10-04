@@ -1,0 +1,5 @@
+(static-library libc
+  (root libc)
+  (module-path "src")
+  (target native)
+  (optimize 0))
